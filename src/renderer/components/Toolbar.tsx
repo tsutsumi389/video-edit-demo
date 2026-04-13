@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useProject } from "../hooks/useProject";
 import { formatTime } from "../utils/time";
 
@@ -17,6 +17,19 @@ export function Toolbar({
 }: ToolbarProps) {
 	const { state, addClipFromMedia } = useProject();
 	const [exportProgress, setExportProgress] = useState<number | null>(null);
+	const [menuOpen, setMenuOpen] = useState<string | null>(null);
+	const menuRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (menuOpen === null) return;
+		const handler = (e: MouseEvent) => {
+			if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+				setMenuOpen(null);
+			}
+		};
+		document.addEventListener("mousedown", handler);
+		return () => document.removeEventListener("mousedown", handler);
+	}, [menuOpen]);
 
 	const handleImport = async () => {
 		const result = await window.api.importFile();
@@ -55,17 +68,44 @@ export function Toolbar({
 	return (
 		<div className="toolbar">
 			<div className="toolbar-left">
-				<button type="button" className="toolbar-btn" onClick={handleImport}>
-					Import
-				</button>
-				<button
-					type="button"
-					className="toolbar-btn"
-					onClick={handleExport}
-					disabled={!hasClips || exportProgress !== null}
-				>
-					{exportProgress !== null ? `Exporting ${Math.round(exportProgress)}%` : "Export"}
-				</button>
+				<div className="menu-bar" ref={menuRef}>
+					<div className="menu-item">
+						<button
+							type="button"
+							className={`menu-trigger ${menuOpen === "file" ? "menu-trigger-active" : ""}`}
+							onClick={() => setMenuOpen(menuOpen === "file" ? null : "file")}
+						>
+							ファイル
+						</button>
+						{menuOpen === "file" && (
+							<div className="menu-dropdown">
+								<button
+									type="button"
+									className="menu-dropdown-item"
+									onClick={() => {
+										setMenuOpen(null);
+										handleImport();
+									}}
+								>
+									インポート...
+								</button>
+								<button
+									type="button"
+									className="menu-dropdown-item"
+									onClick={() => {
+										setMenuOpen(null);
+										handleExport();
+									}}
+									disabled={!hasClips || exportProgress !== null}
+								>
+									{exportProgress !== null
+										? `エクスポート中 ${Math.round(exportProgress)}%`
+										: "エクスポート..."}
+								</button>
+							</div>
+						)}
+					</div>
+				</div>
 			</div>
 
 			<div className="toolbar-center">
