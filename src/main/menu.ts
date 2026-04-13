@@ -1,72 +1,72 @@
-import { Menu, BrowserWindow } from 'electron';
+import { BrowserWindow, Menu } from "electron";
 
 function sendToFocused(channel: string): void {
-  const win = BrowserWindow.getFocusedWindow();
-  if (win) {
-    win.webContents.send(channel);
-  }
+	const win = BrowserWindow.getFocusedWindow();
+	if (win) {
+		win.webContents.send(channel);
+	}
 }
 
 export function createMenu(): void {
-  const template: Electron.MenuItemConstructorOptions[] = [
-    {
-      label: 'File',
-      submenu: [
-        {
-          label: 'Import Video...',
-          accelerator: 'CmdOrCtrl+I',
-          click: () => sendToFocused('menu:import'),
-        },
-        {
-          label: 'Export...',
-          accelerator: 'CmdOrCtrl+E',
-          click: () => sendToFocused('menu:export'),
-        },
-        { type: 'separator' },
-        { role: 'quit' },
-      ],
-    },
-    {
-      label: 'Edit',
-      submenu: [
-        {
-          label: 'Undo',
-          accelerator: 'CmdOrCtrl+Z',
-          click: () => sendToFocused('menu:undo'),
-        },
-        {
-          label: 'Redo',
-          accelerator: 'CmdOrCtrl+Shift+Z',
-          click: () => sendToFocused('menu:redo'),
-        },
-      ],
-    },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'reload' },
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
-      ],
-    },
-  ];
+	const template: Electron.MenuItemConstructorOptions[] = [
+		{
+			label: "File",
+			submenu: [
+				{
+					label: "Import Video...",
+					accelerator: "CmdOrCtrl+I",
+					click: () => sendToFocused("menu:import"),
+				},
+				{
+					label: "Export...",
+					accelerator: "CmdOrCtrl+E",
+					click: () => sendToFocused("menu:export"),
+				},
+				{ type: "separator" },
+				{ role: "quit" },
+			],
+		},
+		{
+			label: "Edit",
+			submenu: [
+				{
+					label: "Undo",
+					accelerator: "CmdOrCtrl+Z",
+					click: () => sendToFocused("menu:undo"),
+				},
+				{
+					label: "Redo",
+					accelerator: "CmdOrCtrl+Shift+Z",
+					click: () => sendToFocused("menu:redo"),
+				},
+			],
+		},
+		{
+			label: "View",
+			submenu: [
+				{ role: "reload" },
+				{ role: "toggleDevTools" },
+				{ type: "separator" },
+				{ role: "togglefullscreen" },
+			],
+		},
+	];
 
-  if (process.platform === 'darwin') {
-    template.unshift({
-      label: 'Video Editor',
-      submenu: [
-        { role: 'about' },
-        { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideOthers' },
-        { role: 'unhide' },
-        { type: 'separator' },
-        { role: 'quit' },
-      ],
-    });
-  }
+	if (process.platform === "darwin") {
+		template.unshift({
+			label: "Video Editor",
+			submenu: [
+				{ role: "about" },
+				{ type: "separator" },
+				{ role: "hide" },
+				{ role: "hideOthers" },
+				{ role: "unhide" },
+				{ type: "separator" },
+				{ role: "quit" },
+			],
+		});
+	}
 
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
+	const menu = Menu.buildFromTemplate(template);
+	Menu.setApplicationMenu(menu);
 }

@@ -1,0 +1,11 @@
+pre-commit:
+  parallel: true
+  commands:
+    oxlint:
+      glob: "*.{ts,tsx}"
+      run: node_modules/.bin/oxlint {staged_files}
+    biome-check:
+      glob: "*.{ts,tsx}"
+      run: node_modules/.bin/biome check --no-errors-on-unmatched {staged_files}
+    typecheck:
+      run: node_modules/.bin/tsc --noEmit
