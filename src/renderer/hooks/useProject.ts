@@ -141,6 +141,29 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 
 		case "MOVE_CLIP": {
 			const track = withUndo.current.tracks[0];
+			const moving = track.clips.find((c) => c.id === action.payload.clipId);
+			if (!moving) return state;
+
+			const movingDuration = moving.outPoint - moving.inPoint;
+			const movingEnd = moving.trackPosition + movingDuration;
+
+			let leftBound = 0;
+			let rightStart = Number.POSITIVE_INFINITY;
+			for (const c of track.clips) {
+				if (c.id === action.payload.clipId) continue;
+				const end = c.trackPosition + (c.outPoint - c.inPoint);
+				if (end <= moving.trackPosition && end > leftBound) leftBound = end;
+				if (c.trackPosition >= movingEnd && c.trackPosition < rightStart)
+					rightStart = c.trackPosition;
+			}
+			const rightBound =
+				rightStart === Number.POSITIVE_INFINITY
+					? Number.POSITIVE_INFINITY
+					: rightStart - movingDuration;
+
+			const requested = Math.max(0, action.payload.trackPosition);
+			const clamped = Math.min(Math.max(requested, leftBound), rightBound);
+
 			return {
 				...withUndo,
 				current: {
@@ -149,9 +172,7 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 						{
 							...track,
 							clips: track.clips.map((c) =>
-								c.id === action.payload.clipId
-									? { ...c, trackPosition: Math.max(0, action.payload.trackPosition) }
-									: c,
+								c.id === action.payload.clipId ? { ...c, trackPosition: clamped } : c,
 							),
 						},
 					],

@@ -5,9 +5,10 @@ interface TrackProps {
 	track: TrackType;
 	pixelsPerSecond: number;
 	selectedClipId: string | null;
+	currentTime: number;
 }
 
-export function Track({ track, pixelsPerSecond, selectedClipId }: TrackProps) {
+export function Track({ track, pixelsPerSecond, selectedClipId, currentTime }: TrackProps) {
 	return (
 		<div className="track">
 			<div className="track-label">V1</div>
@@ -18,6 +19,7 @@ export function Track({ track, pixelsPerSecond, selectedClipId }: TrackProps) {
 						clip={clip}
 						pixelsPerSecond={pixelsPerSecond}
 						isSelected={clip.id === selectedClipId}
+						currentTime={currentTime}
 					/>
 				))}
 			</div>

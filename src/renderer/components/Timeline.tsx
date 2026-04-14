@@ -71,6 +71,14 @@ export function Timeline({
 					});
 				}
 			}
+			if ((e.metaKey || e.ctrlKey) && (e.key === "z" || e.key === "Z")) {
+				e.preventDefault();
+				if (e.shiftKey) {
+					dispatch({ type: "REDO" });
+				} else {
+					dispatch({ type: "UNDO" });
+				}
+			}
 		};
 
 		window.addEventListener("keydown", handleKeyDown);
@@ -117,6 +125,7 @@ export function Timeline({
 						track={track}
 						pixelsPerSecond={PIXELS_PER_SECOND}
 						selectedClipId={state.selectedClipId}
+						currentTime={currentTime}
 					/>
 				</div>
 
