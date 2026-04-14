@@ -15,7 +15,7 @@ export function Toolbar({
 	totalDuration,
 	onTogglePlayPause,
 }: ToolbarProps) {
-	const { state, addClipFromMedia } = useProject();
+	const { state, dispatch, addClipFromMedia } = useProject();
 	const [exportProgress, setExportProgress] = useState<number | null>(null);
 	const [menuOpen, setMenuOpen] = useState<string | null>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
@@ -64,6 +64,24 @@ export function Toolbar({
 	};
 
 	const hasClips = state.current.tracks[0].clips.length > 0;
+	const hasSelection = state.selectedClipId !== null;
+	const canUndo = state.undoStack.length > 0;
+	const canRedo = state.redoStack.length > 0;
+
+	const handleSplit = () => {
+		if (state.selectedClipId) {
+			dispatch({
+				type: "SPLIT_CLIP",
+				payload: { clipId: state.selectedClipId, splitTime: currentTime },
+			});
+		}
+	};
+
+	const handleDelete = () => {
+		if (state.selectedClipId) {
+			dispatch({ type: "REMOVE_CLIP", payload: { clipId: state.selectedClipId } });
+		}
+	};
 
 	return (
 		<div className="toolbar">
@@ -116,6 +134,42 @@ export function Toolbar({
 					disabled={!hasClips}
 				>
 					{isPlaying ? "Pause" : "Play"}
+				</button>
+				<button
+					type="button"
+					className="toolbar-btn"
+					onClick={handleSplit}
+					disabled={!hasSelection}
+					title="選択クリップを再生位置で分割 (S)"
+				>
+					分割
+				</button>
+				<button
+					type="button"
+					className="toolbar-btn"
+					onClick={handleDelete}
+					disabled={!hasSelection}
+					title="選択クリップを削除 (Delete)"
+				>
+					削除
+				</button>
+				<button
+					type="button"
+					className="toolbar-btn"
+					onClick={() => dispatch({ type: "UNDO" })}
+					disabled={!canUndo}
+					title="元に戻す (Cmd/Ctrl+Z)"
+				>
+					元に戻す
+				</button>
+				<button
+					type="button"
+					className="toolbar-btn"
+					onClick={() => dispatch({ type: "REDO" })}
+					disabled={!canRedo}
+					title="やり直す (Cmd/Ctrl+Shift+Z)"
+				>
+					やり直す
 				</button>
 				<span className="time-display">
 					{formatTime(currentTime)} / {formatTime(totalDuration)}

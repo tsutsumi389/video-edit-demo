@@ -141,6 +141,16 @@ body {
 	cursor: default;
 }
 
+.clip-context-menu {
+	min-width: 160px;
+	background: #1a1a2e;
+	border: 1px solid #0f3460;
+	border-radius: 4px;
+	padding: 4px 0;
+	z-index: 200;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
 .time-display {
 	font-size: 13px;
 	font-family: "SF Mono", "Fira Code", monospace;
