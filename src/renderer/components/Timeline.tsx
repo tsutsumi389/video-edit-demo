@@ -85,6 +85,15 @@ export function Timeline({
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [state.selectedClipId, currentTime, dispatch]);
 
+	useEffect(() => {
+		const unsubscribeUndo = window.api.onMenuUndo(() => dispatch({ type: "UNDO" }));
+		const unsubscribeRedo = window.api.onMenuRedo(() => dispatch({ type: "REDO" }));
+		return () => {
+			unsubscribeUndo();
+			unsubscribeRedo();
+		};
+	}, [dispatch]);
+
 	// Ruler tick marks
 	const ticks = useMemo(() => {
 		const result: { x: number; label: string; major: boolean }[] = [];
