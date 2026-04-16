@@ -23,18 +23,20 @@ export function Timeline({
 	const { state, dispatch } = useProject();
 	const timelineRef = useRef<HTMLDivElement>(null);
 
-	const track = state.current.tracks[0];
+	const tracks = state.current.tracks;
 
-	// Calculate total duration from clips
 	useEffect(() => {
-		const maxEnd =
-			track.clips.length === 0
-				? 0
-				: Math.max(...track.clips.map((c) => c.trackPosition + (c.outPoint - c.inPoint)));
+		const maxEnd = tracks.reduce((max, track) => {
+			if (track.clips.length === 0) return max;
+			const trackMax = Math.max(
+				...track.clips.map((c) => c.trackPosition + (c.outPoint - c.inPoint)),
+			);
+			return Math.max(max, trackMax);
+		}, 0);
 		if (maxEnd !== totalDuration) {
 			onSetTotalDuration(maxEnd);
 		}
-	}, [track.clips, totalDuration, onSetTotalDuration]);
+	}, [tracks, totalDuration, onSetTotalDuration]);
 
 	const timelineWidth = Math.max((totalDuration + 5) * PIXELS_PER_SECOND, 800);
 	const playheadLeft = currentTime * PIXELS_PER_SECOND;
@@ -51,6 +53,10 @@ export function Timeline({
 
 	const handleDeselect = useCallback(() => {
 		dispatch({ type: "SELECT_CLIP", payload: { clipId: null } });
+	}, [dispatch]);
+
+	const handleAddTrack = useCallback(() => {
+		dispatch({ type: "ADD_TRACK" });
 	}, [dispatch]);
 
 	// Keyboard shortcuts
@@ -128,14 +134,27 @@ export function Timeline({
 					))}
 				</div>
 
-				{/* Tracks */}
 				<div className="timeline-tracks" onClick={handleDeselect}>
-					<Track
-						track={track}
-						pixelsPerSecond={PIXELS_PER_SECOND}
-						selectedClipId={state.selectedClipId}
-						currentTime={currentTime}
-					/>
+					{tracks.map((track, i) => (
+						<Track
+							key={track.id}
+							track={track}
+							trackIndex={i}
+							pixelsPerSecond={PIXELS_PER_SECOND}
+							selectedClipId={state.selectedClipId}
+							currentTime={currentTime}
+						/>
+					))}
+					<div className="add-track-row">
+						<button
+							type="button"
+							className="add-track-btn"
+							onClick={handleAddTrack}
+							title="トラック追加"
+						>
+							+
+						</button>
+					</div>
 				</div>
 
 				{/* Playhead */}

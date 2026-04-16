@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useProject } from "../hooks/useProject";
+import { flattenTracks } from "../utils/flatten";
 import { formatTime } from "../utils/time";
 
 interface ToolbarProps {
@@ -39,16 +40,8 @@ export function Toolbar({
 	};
 
 	const handleExport = async () => {
-		const clips = state.current.tracks[0].clips;
-		if (clips.length === 0) return;
-
-		const edl = clips
-			.sort((a, b) => a.trackPosition - b.trackPosition)
-			.map((c) => ({
-				sourceFile: c.sourceFile,
-				inPoint: c.inPoint,
-				outPoint: c.outPoint,
-			}));
+		const edl = flattenTracks(state.current.tracks);
+		if (edl.length === 0) return;
 
 		setExportProgress(0);
 		const cleanup = window.api.onExportProgress((progress) => {
@@ -63,7 +56,7 @@ export function Toolbar({
 		}
 	};
 
-	const hasClips = state.current.tracks[0].clips.length > 0;
+	const hasClips = state.current.tracks.some((t) => t.clips.length > 0);
 	const hasSelection = state.selectedClipId !== null;
 	const canUndo = state.undoStack.length > 0;
 	const canRedo = state.redoStack.length > 0;
