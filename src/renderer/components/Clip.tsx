@@ -5,12 +5,13 @@ import type { Clip as ClipType } from "../types/project";
 
 interface ClipProps {
 	clip: ClipType;
+	trackId: string;
 	pixelsPerSecond: number;
 	isSelected: boolean;
 	currentTime: number;
 }
 
-export function Clip({ clip, pixelsPerSecond, isSelected, currentTime }: ClipProps) {
+export function Clip({ clip, trackId, pixelsPerSecond, isSelected, currentTime }: ClipProps) {
 	const { dispatch } = useProject();
 	const dragRef = useRef<{
 		startX: number;
@@ -38,6 +39,7 @@ export function Clip({ clip, pixelsPerSecond, isSelected, currentTime }: ClipPro
 			dispatch({ type: "SELECT_CLIP", payload: { clipId: clip.id } });
 
 			dragRef.current = { startX: e.clientX, startPos: clip.trackPosition, mode };
+			const trackElements = document.querySelectorAll("[data-track-id]");
 
 			const handleMouseMove = (ev: MouseEvent) => {
 				if (!dragRef.current) return;
@@ -45,9 +47,22 @@ export function Clip({ clip, pixelsPerSecond, isSelected, currentTime }: ClipPro
 				const dtSeconds = dx / pixelsPerSecond;
 
 				if (dragRef.current.mode === "move") {
+					let targetTrackId = trackId;
+					for (const el of trackElements) {
+						const rect = el.getBoundingClientRect();
+						if (ev.clientY >= rect.top && ev.clientY <= rect.bottom) {
+							targetTrackId = el.getAttribute("data-track-id") ?? trackId;
+							break;
+						}
+					}
+
 					dispatch({
 						type: "MOVE_CLIP",
-						payload: { clipId: clip.id, trackPosition: dragRef.current.startPos + dtSeconds },
+						payload: {
+							clipId: clip.id,
+							trackPosition: dragRef.current.startPos + dtSeconds,
+							trackId: targetTrackId,
+						},
 					});
 				} else if (dragRef.current.mode === "trim-left") {
 					const newIn = Math.max(0, clip.inPoint + dtSeconds);
@@ -77,7 +92,7 @@ export function Clip({ clip, pixelsPerSecond, isSelected, currentTime }: ClipPro
 			window.addEventListener("mousemove", handleMouseMove);
 			window.addEventListener("mouseup", handleMouseUp);
 		},
-		[clip, pixelsPerSecond, dispatch],
+		[clip, trackId, pixelsPerSecond, dispatch],
 	);
 
 	const handleContextMenu = useCallback(

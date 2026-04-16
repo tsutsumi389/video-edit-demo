@@ -11,16 +11,19 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 	const videoRef = useRef<HTMLVideoElement>(null);
 	const lastSrcRef = useRef<string>("");
 
-	const clips = useMemo(
-		() => state.current.tracks[0].clips.slice().sort((a, b) => a.trackPosition - b.trackPosition),
-		[state.current.tracks[0].clips],
-	);
+	const tracks = state.current.tracks;
 
-	// Find the clip at currentTime
-	const activeClip = clips.find((c) => {
-		const clipDuration = c.outPoint - c.inPoint;
-		return currentTime >= c.trackPosition && currentTime < c.trackPosition + clipDuration;
-	});
+	// Find active clip: highest track index wins (last in array = topmost)
+	const activeClip = useMemo(() => {
+		for (let i = tracks.length - 1; i >= 0; i--) {
+			const clip = tracks[i].clips.find((c) => {
+				const clipDuration = c.outPoint - c.inPoint;
+				return currentTime >= c.trackPosition && currentTime < c.trackPosition + clipDuration;
+			});
+			if (clip) return clip;
+		}
+		return undefined;
+	}, [tracks, currentTime]);
 
 	useEffect(() => {
 		const video = videoRef.current;
@@ -49,7 +52,9 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 		}
 	}, [currentTime, isPlaying, activeClip]);
 
-	if (clips.length === 0) {
+	const hasAnyClips = useMemo(() => tracks.some((t) => t.clips.length > 0), [tracks]);
+
+	if (!hasAnyClips) {
 		return (
 			<div className="preview">
 				<div className="preview-placeholder">Import a video to get started</div>

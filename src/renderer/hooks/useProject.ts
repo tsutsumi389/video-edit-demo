@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useReducer } from "react";
 import { v4 as uuidv4 } from "uuid";
-import type { Clip, MediaInfo, Project, ProjectAction } from "../types/project";
+import type { Clip, MediaInfo, Project, ProjectAction, Track } from "../types/project";
 
 interface ProjectState {
 	current: Project;
@@ -17,6 +17,40 @@ const initialState: ProjectState = {
 	redoStack: [],
 	selectedClipId: null,
 };
+
+function findClipTrack(tracks: Track[], clipId: string): { track: Track; clip: Clip } | null {
+	for (const track of tracks) {
+		const clip = track.clips.find((c) => c.id === clipId);
+		if (clip) return { track, clip };
+	}
+	return null;
+}
+
+function updateTrackById(tracks: Track[], trackId: string, updater: (t: Track) => Track): Track[] {
+	return tracks.map((t) => (t.id === trackId ? updater(t) : t));
+}
+
+function clampToTrackBounds(
+	trackClips: Clip[],
+	movingId: string,
+	movingDuration: number,
+	requested: number,
+): number {
+	let leftBound = 0;
+	let rightStart = Number.POSITIVE_INFINITY;
+	for (const c of trackClips) {
+		if (c.id === movingId) continue;
+		const end = c.trackPosition + (c.outPoint - c.inPoint);
+		if (end <= requested && end > leftBound) leftBound = end;
+		if (c.trackPosition >= requested + movingDuration && c.trackPosition < rightStart)
+			rightStart = c.trackPosition;
+	}
+	const rightBound =
+		rightStart === Number.POSITIVE_INFINITY
+			? Number.POSITIVE_INFINITY
+			: rightStart - movingDuration;
+	return Math.min(Math.max(0, requested, leftBound), rightBound);
+}
 
 function projectReducer(state: ProjectState, action: ProjectAction): ProjectState {
 	if (action.type === "SELECT_CLIP") {
@@ -55,71 +89,69 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 
 	switch (action.type) {
 		case "ADD_CLIP": {
-			const track = withUndo.current.tracks[0];
-			const newClips = [...track.clips, action.payload.clip];
+			const { clip, trackId } = action.payload;
 			return {
 				...withUndo,
 				current: {
 					...withUndo.current,
-					tracks: [{ ...track, clips: newClips }],
+					tracks: updateTrackById(withUndo.current.tracks, trackId, (t) => ({
+						...t,
+						clips: [...t.clips, clip],
+					})),
 				},
 			};
 		}
 
 		case "REMOVE_CLIP": {
-			const track = withUndo.current.tracks[0];
+			const { clipId } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found) return state;
 			return {
 				...withUndo,
 				current: {
 					...withUndo.current,
-					tracks: [
-						{
-							...track,
-							clips: track.clips.filter((c) => c.id !== action.payload.clipId),
-						},
-					],
+					tracks: updateTrackById(withUndo.current.tracks, found.track.id, (t) => ({
+						...t,
+						clips: t.clips.filter((c) => c.id !== clipId),
+					})),
 				},
-				selectedClipId:
-					state.selectedClipId === action.payload.clipId ? null : state.selectedClipId,
+				selectedClipId: state.selectedClipId === clipId ? null : state.selectedClipId,
 			};
 		}
 
 		case "TRIM_CLIP": {
-			const track = withUndo.current.tracks[0];
+			const { clipId, inPoint, outPoint } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found) return state;
 			return {
 				...withUndo,
 				current: {
 					...withUndo.current,
-					tracks: [
-						{
-							...track,
-							clips: track.clips.map((c) => {
-								if (c.id !== action.payload.clipId) return c;
-								const newIn = action.payload.inPoint ?? c.inPoint;
-								const newOut = action.payload.outPoint ?? c.outPoint;
-								return { ...c, inPoint: newIn, outPoint: newOut };
-							}),
-						},
-					],
+					tracks: updateTrackById(withUndo.current.tracks, found.track.id, (t) => ({
+						...t,
+						clips: t.clips.map((c) => {
+							if (c.id !== clipId) return c;
+							const newIn = inPoint ?? c.inPoint;
+							const newOut = outPoint ?? c.outPoint;
+							return { ...c, inPoint: newIn, outPoint: newOut };
+						}),
+					})),
 				},
 			};
 		}
 
 		case "SPLIT_CLIP": {
-			const track = withUndo.current.tracks[0];
-			const clipIndex = track.clips.findIndex((c) => c.id === action.payload.clipId);
-			if (clipIndex === -1) return state;
+			const { clipId, splitTime } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found) return state;
 
-			const clip = track.clips[clipIndex];
-			const relativeTime = action.payload.splitTime - clip.trackPosition;
+			const clip = found.clip;
+			const relativeTime = splitTime - clip.trackPosition;
 			const splitSourceTime = clip.inPoint + relativeTime;
 
 			if (splitSourceTime <= clip.inPoint || splitSourceTime >= clip.outPoint) return state;
 
-			const clipA: Clip = {
-				...clip,
-				outPoint: splitSourceTime,
-			};
+			const clipA: Clip = { ...clip, outPoint: splitSourceTime };
 			const clipB: Clip = {
 				...clip,
 				id: uuidv4(),
@@ -127,56 +159,97 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 				trackPosition: clip.trackPosition + relativeTime,
 			};
 
-			const newClips = [...track.clips];
-			newClips.splice(clipIndex, 1, clipA, clipB);
-
 			return {
 				...withUndo,
 				current: {
 					...withUndo.current,
-					tracks: [{ ...track, clips: newClips }],
+					tracks: updateTrackById(withUndo.current.tracks, found.track.id, (t) => {
+						const idx = t.clips.findIndex((c) => c.id === clipId);
+						const newClips = [...t.clips];
+						newClips.splice(idx, 1, clipA, clipB);
+						return { ...t, clips: newClips };
+					}),
 				},
 			};
 		}
 
 		case "MOVE_CLIP": {
-			const track = withUndo.current.tracks[0];
-			const moving = track.clips.find((c) => c.id === action.payload.clipId);
-			if (!moving) return state;
+			const { clipId, trackPosition, trackId: targetTrackId } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found) return state;
 
-			const movingDuration = moving.outPoint - moving.inPoint;
-			const movingEnd = moving.trackPosition + movingDuration;
+			const movingClip = found.clip;
+			const movingDuration = movingClip.outPoint - movingClip.inPoint;
+			const sourceTrackId = found.track.id;
 
-			let leftBound = 0;
-			let rightStart = Number.POSITIVE_INFINITY;
-			for (const c of track.clips) {
-				if (c.id === action.payload.clipId) continue;
-				const end = c.trackPosition + (c.outPoint - c.inPoint);
-				if (end <= moving.trackPosition && end > leftBound) leftBound = end;
-				if (c.trackPosition >= movingEnd && c.trackPosition < rightStart)
-					rightStart = c.trackPosition;
+			if (sourceTrackId === targetTrackId) {
+				// Same track: clamp within track bounds
+				const clamped = clampToTrackBounds(
+					found.track.clips,
+					clipId,
+					movingDuration,
+					trackPosition,
+				);
+				return {
+					...withUndo,
+					current: {
+						...withUndo.current,
+						tracks: updateTrackById(withUndo.current.tracks, sourceTrackId, (t) => ({
+							...t,
+							clips: t.clips.map((c) => (c.id === clipId ? { ...c, trackPosition: clamped } : c)),
+						})),
+					},
+				};
 			}
-			const rightBound =
-				rightStart === Number.POSITIVE_INFINITY
-					? Number.POSITIVE_INFINITY
-					: rightStart - movingDuration;
 
-			const requested = Math.max(0, action.payload.trackPosition);
-			const clamped = Math.min(Math.max(requested, leftBound), rightBound);
+			// Cross-track move: remove from source, add to target
+			const targetTrack = withUndo.current.tracks.find((t) => t.id === targetTrackId);
+			if (!targetTrack) return state;
 
+			const clamped = clampToTrackBounds(targetTrack.clips, clipId, movingDuration, trackPosition);
+
+			const movedClip: Clip = { ...movingClip, trackPosition: clamped };
+
+			let newTracks = updateTrackById(withUndo.current.tracks, sourceTrackId, (t) => ({
+				...t,
+				clips: t.clips.filter((c) => c.id !== clipId),
+			}));
+			newTracks = updateTrackById(newTracks, targetTrackId, (t) => ({
+				...t,
+				clips: [...t.clips, movedClip],
+			}));
+
+			return {
+				...withUndo,
+				current: { ...withUndo.current, tracks: newTracks },
+			};
+		}
+
+		case "ADD_TRACK": {
 			return {
 				...withUndo,
 				current: {
 					...withUndo.current,
-					tracks: [
-						{
-							...track,
-							clips: track.clips.map((c) =>
-								c.id === action.payload.clipId ? { ...c, trackPosition: clamped } : c,
-							),
-						},
-					],
+					tracks: [...withUndo.current.tracks, { id: uuidv4(), clips: [] }],
 				},
+			};
+		}
+
+		case "REMOVE_TRACK": {
+			const { trackId } = action.payload;
+			if (withUndo.current.tracks.length <= 1) return state;
+			const removedTrack = withUndo.current.tracks.find((t) => t.id === trackId);
+			const removedClipIds = removedTrack ? removedTrack.clips.map((c) => c.id) : [];
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					tracks: withUndo.current.tracks.filter((t) => t.id !== trackId),
+				},
+				selectedClipId:
+					state.selectedClipId && removedClipIds.includes(state.selectedClipId)
+						? null
+						: state.selectedClipId,
 			};
 		}
 
@@ -216,7 +289,7 @@ export function useProjectReducer() {
 				height: media.height,
 			};
 
-			dispatch({ type: "ADD_CLIP", payload: { clip } });
+			dispatch({ type: "ADD_CLIP", payload: { clip, trackId: track.id } });
 		},
 		[state.current.tracks],
 	);

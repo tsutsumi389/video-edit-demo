@@ -28,11 +28,13 @@ export interface MediaInfo {
 }
 
 export type ProjectAction =
-	| { type: "ADD_CLIP"; payload: { clip: Clip } }
+	| { type: "ADD_CLIP"; payload: { clip: Clip; trackId: string } }
 	| { type: "REMOVE_CLIP"; payload: { clipId: string } }
 	| { type: "TRIM_CLIP"; payload: { clipId: string; inPoint?: number; outPoint?: number } }
 	| { type: "SPLIT_CLIP"; payload: { clipId: string; splitTime: number } }
-	| { type: "MOVE_CLIP"; payload: { clipId: string; trackPosition: number } }
+	| { type: "MOVE_CLIP"; payload: { clipId: string; trackPosition: number; trackId: string } }
 	| { type: "SELECT_CLIP"; payload: { clipId: string | null } }
+	| { type: "ADD_TRACK" }
+	| { type: "REMOVE_TRACK"; payload: { trackId: string } }
 	| { type: "UNDO" }
 	| { type: "REDO" };
