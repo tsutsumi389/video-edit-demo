@@ -9,10 +9,12 @@ interface ProjectState {
 	selectedClipId: string | null;
 }
 
+export function createEmptyProject(): Project {
+	return { tracks: [{ id: uuidv4(), clips: [] }] };
+}
+
 const initialState: ProjectState = {
-	current: {
-		tracks: [{ id: "track-1", clips: [] }],
-	},
+	current: createEmptyProject(),
 	undoStack: [],
 	redoStack: [],
 	selectedClipId: null,
@@ -55,6 +57,15 @@ function clampToTrackBounds(
 function projectReducer(state: ProjectState, action: ProjectAction): ProjectState {
 	if (action.type === "SELECT_CLIP") {
 		return { ...state, selectedClipId: action.payload.clipId };
+	}
+
+	if (action.type === "LOAD_PROJECT") {
+		return {
+			current: action.payload.project,
+			undoStack: [],
+			redoStack: [],
+			selectedClipId: null,
+		};
 	}
 
 	if (action.type === "UNDO") {

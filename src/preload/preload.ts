@@ -17,8 +17,21 @@ export interface ElectronAPI {
 	) => Promise<string | null>;
 	onExportProgress: (callback: (progress: number) => void) => () => void;
 	getMediaUrl: (filePath: string) => string;
+	saveProject: (projectFile: unknown) => Promise<string | null>;
+	openProject: () => Promise<unknown>;
 	onMenuUndo: (callback: () => void) => () => void;
 	onMenuRedo: (callback: () => void) => () => void;
+	onMenuNew: (callback: () => void) => () => void;
+	onMenuOpen: (callback: () => void) => () => void;
+	onMenuSave: (callback: () => void) => () => void;
+}
+
+function onMenuChannel(channel: string) {
+	return (callback: () => void) => {
+		const handler = () => callback();
+		ipcRenderer.on(channel, handler);
+		return () => ipcRenderer.removeListener(channel, handler);
+	};
 }
 
 contextBridge.exposeInMainWorld("api", {
@@ -31,14 +44,11 @@ contextBridge.exposeInMainWorld("api", {
 		return () => ipcRenderer.removeListener("export:progress", handler);
 	},
 	getMediaUrl: (filePath: string) => `media-loader://${encodeURIComponent(filePath)}`,
-	onMenuUndo: (callback: () => void) => {
-		const handler = () => callback();
-		ipcRenderer.on("menu:undo", handler);
-		return () => ipcRenderer.removeListener("menu:undo", handler);
-	},
-	onMenuRedo: (callback: () => void) => {
-		const handler = () => callback();
-		ipcRenderer.on("menu:redo", handler);
-		return () => ipcRenderer.removeListener("menu:redo", handler);
-	},
+	saveProject: (projectFile: unknown) => ipcRenderer.invoke("project:save", projectFile),
+	openProject: () => ipcRenderer.invoke("project:open"),
+	onMenuUndo: onMenuChannel("menu:undo"),
+	onMenuRedo: onMenuChannel("menu:redo"),
+	onMenuNew: onMenuChannel("menu:new"),
+	onMenuOpen: onMenuChannel("menu:open"),
+	onMenuSave: onMenuChannel("menu:save"),
 } satisfies ElectronAPI);

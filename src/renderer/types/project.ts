@@ -36,5 +36,14 @@ export type ProjectAction =
 	| { type: "SELECT_CLIP"; payload: { clipId: string | null } }
 	| { type: "ADD_TRACK" }
 	| { type: "REMOVE_TRACK"; payload: { trackId: string } }
+	| { type: "LOAD_PROJECT"; payload: { project: Project } }
 	| { type: "UNDO" }
 	| { type: "REDO" };
+
+export const PROJECT_FILE_VERSION = 1;
+
+export interface ProjectFile {
+	version: typeof PROJECT_FILE_VERSION;
+	savedAt: string;
+	project: Project;
+}

@@ -141,6 +141,12 @@ body {
 	cursor: default;
 }
 
+.menu-dropdown-separator {
+	height: 1px;
+	background: #0f3460;
+	margin: 4px 0;
+}
+
 .clip-context-menu {
 	min-width: 160px;
 	background: #1a1a2e;

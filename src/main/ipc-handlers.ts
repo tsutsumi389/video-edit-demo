@@ -1,3 +1,4 @@
+import { readFile, writeFile } from "node:fs/promises";
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import { type EDLEntry, exportTimeline, probe } from "./ffmpeg-service";
 
@@ -34,5 +35,33 @@ export function registerIpcHandlers(): void {
 		});
 
 		return result.filePath;
+	});
+
+	ipcMain.handle("project:save", async (_event, projectFile: unknown) => {
+		const result = await dialog.showSaveDialog({
+			defaultPath: "project.vedproj",
+			filters: [{ name: "Video Editor Project", extensions: ["vedproj"] }],
+		});
+
+		if (result.canceled || !result.filePath) {
+			return null;
+		}
+
+		await writeFile(result.filePath, JSON.stringify(projectFile, null, 2), "utf-8");
+		return result.filePath;
+	});
+
+	ipcMain.handle("project:open", async () => {
+		const result = await dialog.showOpenDialog({
+			properties: ["openFile"],
+			filters: [{ name: "Video Editor Project", extensions: ["vedproj"] }],
+		});
+
+		if (result.canceled || result.filePaths.length === 0) {
+			return null;
+		}
+
+		const raw = await readFile(result.filePaths[0], "utf-8");
+		return JSON.parse(raw);
 	});
 }

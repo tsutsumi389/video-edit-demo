@@ -13,6 +13,22 @@ export function createMenu(): void {
 			label: "File",
 			submenu: [
 				{
+					label: "New Project",
+					accelerator: "CmdOrCtrl+N",
+					click: () => sendToFocused("menu:new"),
+				},
+				{
+					label: "Open Project...",
+					accelerator: "CmdOrCtrl+O",
+					click: () => sendToFocused("menu:open"),
+				},
+				{
+					label: "Save Project...",
+					accelerator: "CmdOrCtrl+S",
+					click: () => sendToFocused("menu:save"),
+				},
+				{ type: "separator" },
+				{
 					label: "Import Video...",
 					accelerator: "CmdOrCtrl+I",
 					click: () => sendToFocused("menu:import"),

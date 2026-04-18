@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from "react";
-import { useProject } from "../hooks/useProject";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createEmptyProject, useProject } from "../hooks/useProject";
+import { PROJECT_FILE_VERSION, type ProjectFile } from "../types/project";
 import { flattenTracks } from "../utils/flatten";
+import { parseProjectFile } from "../utils/project-schema";
 import { formatTime } from "../utils/time";
 
 interface ToolbarProps {
@@ -38,6 +40,52 @@ export function Toolbar({
 			addClipFromMedia(result);
 		}
 	};
+
+	const currentProjectRef = useRef(state.current);
+	currentProjectRef.current = state.current;
+
+	const handleNewProject = useCallback(() => {
+		dispatch({ type: "LOAD_PROJECT", payload: { project: createEmptyProject() } });
+	}, [dispatch]);
+
+	const handleSaveProject = useCallback(async () => {
+		const file: ProjectFile = {
+			version: PROJECT_FILE_VERSION,
+			savedAt: new Date().toISOString(),
+			project: currentProjectRef.current,
+		};
+		try {
+			await window.api.saveProject(file);
+		} catch (error) {
+			window.alert(
+				`プロジェクトの保存に失敗しました: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}, []);
+
+	const handleOpenProject = useCallback(async () => {
+		try {
+			const raw = await window.api.openProject();
+			if (raw === null || raw === undefined) return;
+			const file = parseProjectFile(raw);
+			dispatch({ type: "LOAD_PROJECT", payload: { project: file.project } });
+		} catch (error) {
+			window.alert(
+				`プロジェクトの読み込みに失敗しました: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}, [dispatch]);
+
+	useEffect(() => {
+		const disposers = [
+			window.api.onMenuNew(handleNewProject),
+			window.api.onMenuOpen(handleOpenProject),
+			window.api.onMenuSave(handleSaveProject),
+		];
+		return () => {
+			for (const dispose of disposers) dispose();
+		};
+	}, [handleNewProject, handleOpenProject, handleSaveProject]);
 
 	const handleExport = async () => {
 		const edl = flattenTracks(state.current.tracks);
@@ -90,6 +138,37 @@ export function Toolbar({
 						</button>
 						{menuOpen === "file" && (
 							<div className="menu-dropdown">
+								<button
+									type="button"
+									className="menu-dropdown-item"
+									onClick={() => {
+										setMenuOpen(null);
+										handleNewProject();
+									}}
+								>
+									新規プロジェクト
+								</button>
+								<button
+									type="button"
+									className="menu-dropdown-item"
+									onClick={() => {
+										setMenuOpen(null);
+										handleOpenProject();
+									}}
+								>
+									プロジェクトを開く...
+								</button>
+								<button
+									type="button"
+									className="menu-dropdown-item"
+									onClick={() => {
+										setMenuOpen(null);
+										handleSaveProject();
+									}}
+								>
+									プロジェクトを保存...
+								</button>
+								<div className="menu-dropdown-separator" />
 								<button
 									type="button"
 									className="menu-dropdown-item"
