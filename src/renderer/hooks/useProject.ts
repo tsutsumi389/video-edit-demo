@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useReducer } from "react";
 import { v4 as uuidv4 } from "uuid";
-import type { Clip, MediaInfo, Project, ProjectAction, Track } from "../types/project";
+import type { Clip, MediaInfo, Project, ProjectAction, Track, TrackKind } from "../types/project";
+import { clamp } from "../utils/time";
 
 interface ProjectState {
 	current: Project;
@@ -10,9 +11,20 @@ interface ProjectState {
 	clipboard: Clip | null;
 }
 
+function createTrack(kind: TrackKind, id?: string): Track {
+	return {
+		id: id ?? uuidv4(),
+		kind,
+		clips: [],
+		volume: 1,
+		muted: false,
+		solo: false,
+	};
+}
+
 const initialState: ProjectState = {
 	current: {
-		tracks: [{ id: "track-1", clips: [] }],
+		tracks: [createTrack("video", "track-1"), createTrack("audio", "track-a1")],
 		markers: [],
 	},
 	undoStack: [],
@@ -68,6 +80,13 @@ function rippleShift(clips: Clip[], fromPos: number, delta: number, excludeId?: 
 
 function sortMarkersByTime<T extends { time: number }>(markers: T[]): T[] {
 	return [...markers].sort((a, b) => a.time - b.time);
+}
+
+function clampFadeBounds(clip: Clip, fadeIn: number, fadeOut: number): { in: number; out: number } {
+	const duration = clip.outPoint - clip.inPoint;
+	const safeIn = clamp(fadeIn, 0, duration);
+	const safeOut = clamp(fadeOut, 0, duration - safeIn);
+	return { in: safeIn, out: safeOut };
 }
 
 function projectReducer(state: ProjectState, action: ProjectAction): ProjectState {
@@ -180,7 +199,12 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 							if (c.id !== clipId) return c;
 							const newIn = inPoint ?? c.inPoint;
 							const newOut = outPoint ?? c.outPoint;
-							return { ...c, inPoint: newIn, outPoint: newOut };
+							const { in: fIn, out: fOut } = clampFadeBounds(
+								{ ...c, inPoint: newIn, outPoint: newOut },
+								c.fadeIn,
+								c.fadeOut,
+							);
+							return { ...c, inPoint: newIn, outPoint: newOut, fadeIn: fIn, fadeOut: fOut };
 						}),
 					})),
 				},
@@ -198,12 +222,13 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 
 			if (splitSourceTime <= clip.inPoint || splitSourceTime >= clip.outPoint) return state;
 
-			const clipA: Clip = { ...clip, outPoint: splitSourceTime };
+			const clipA: Clip = { ...clip, outPoint: splitSourceTime, fadeOut: 0 };
 			const clipB: Clip = {
 				...clip,
 				id: uuidv4(),
 				inPoint: splitSourceTime,
 				trackPosition: clip.trackPosition + relativeTime,
+				fadeIn: 0,
 			};
 
 			return {
@@ -229,8 +254,14 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 			const movingDuration = movingClip.outPoint - movingClip.inPoint;
 			const sourceTrackId = found.track.id;
 
+			// Reject moving a clip into a track whose kind it cannot be played on.
+			const targetTrack = withUndo.current.tracks.find((t) => t.id === targetTrackId);
+			if (!targetTrack) return state;
+			if (targetTrack.kind === "audio" && !movingClip.hasAudio) return state;
+			if (targetTrack.kind === "video" && !movingClip.hasVideo && !movingClip.hasAudio)
+				return state;
+
 			if (sourceTrackId === targetTrackId) {
-				// Same track: clamp within track bounds
 				const clamped = clampToTrackBounds(
 					found.track.clips,
 					clipId,
@@ -248,10 +279,6 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 					},
 				};
 			}
-
-			// Cross-track move: remove from source, add to target
-			const targetTrack = withUndo.current.tracks.find((t) => t.id === targetTrackId);
-			if (!targetTrack) return state;
 
 			const clamped = clampToTrackBounds(targetTrack.clips, clipId, movingDuration, trackPosition);
 
@@ -277,10 +304,10 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 			const { trackId, trackPosition, ripple } = action.payload;
 			const targetTrack = withUndo.current.tracks.find((t) => t.id === trackId);
 			if (!targetTrack) return state;
+			if (targetTrack.kind === "audio" && !state.clipboard.hasAudio) return state;
 			const pastedDuration = state.clipboard.outPoint - state.clipboard.inPoint;
 			const newClipId = uuidv4();
 			const requested = Math.max(0, trackPosition);
-			// Non-ripple pastes are clamped against existing neighbors so the new clip does not overlap.
 			const finalPos = ripple
 				? requested
 				: clampToTrackBounds(targetTrack.clips, newClipId, pastedDuration, requested);
@@ -323,12 +350,54 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 			};
 		}
 
-		case "ADD_TRACK": {
+		case "SET_CLIP_VOLUME": {
+			const { clipId, volume } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found) return state;
+			const clamped = clamp(volume, 0, 2);
 			return {
 				...withUndo,
 				current: {
 					...withUndo.current,
-					tracks: [...withUndo.current.tracks, { id: uuidv4(), clips: [] }],
+					tracks: updateTrackById(withUndo.current.tracks, found.track.id, (t) => ({
+						...t,
+						clips: t.clips.map((c) => (c.id === clipId ? { ...c, volume: clamped } : c)),
+					})),
+				},
+			};
+		}
+
+		case "SET_CLIP_FADE": {
+			const { clipId, fadeIn, fadeOut } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found) return state;
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					tracks: updateTrackById(withUndo.current.tracks, found.track.id, (t) => ({
+						...t,
+						clips: t.clips.map((c) => {
+							if (c.id !== clipId) return c;
+							const { in: fIn, out: fOut } = clampFadeBounds(
+								c,
+								fadeIn ?? c.fadeIn,
+								fadeOut ?? c.fadeOut,
+							);
+							return { ...c, fadeIn: fIn, fadeOut: fOut };
+						}),
+					})),
+				},
+			};
+		}
+
+		case "ADD_TRACK": {
+			const kind: TrackKind = action.payload?.kind ?? "video";
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					tracks: [...withUndo.current.tracks, createTrack(kind)],
 				},
 			};
 		}
@@ -348,6 +417,43 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 					state.selectedClipId && removedClipIds.includes(state.selectedClipId)
 						? null
 						: state.selectedClipId,
+			};
+		}
+
+		case "SET_TRACK_VOLUME": {
+			const { trackId, volume } = action.payload;
+			const clamped = clamp(volume, 0, 2);
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					tracks: updateTrackById(withUndo.current.tracks, trackId, (t) => ({
+						...t,
+						volume: clamped,
+					})),
+				},
+			};
+		}
+
+		case "SET_TRACK_MUTED": {
+			const { trackId, muted } = action.payload;
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					tracks: updateTrackById(withUndo.current.tracks, trackId, (t) => ({ ...t, muted })),
+				},
+			};
+		}
+
+		case "SET_TRACK_SOLO": {
+			const { trackId, solo } = action.payload;
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					tracks: updateTrackById(withUndo.current.tracks, trackId, (t) => ({ ...t, solo })),
+				},
 			};
 		}
 
@@ -416,18 +522,26 @@ interface ProjectContextValue {
 
 export const ProjectContext = createContext<ProjectContextValue | null>(null);
 
+function computeAppendPosition(clips: Clip[]): number {
+	if (clips.length === 0) return 0;
+	return clips.reduce((max, c) => {
+		const end = c.trackPosition + (c.outPoint - c.inPoint);
+		return end > max ? end : max;
+	}, 0);
+}
+
 export function useProjectReducer() {
 	const [state, dispatch] = useReducer(projectReducer, initialState);
 
 	const addClipFromMedia = useCallback(
 		(media: MediaInfo) => {
-			const track = state.current.tracks[0];
-			const lastClip = track.clips[track.clips.length - 1];
-			const trackPosition = lastClip
-				? lastClip.trackPosition + (lastClip.outPoint - lastClip.inPoint)
-				: 0;
+			const tracks = state.current.tracks;
+			const desiredKind: TrackKind = media.hasVideo ? "video" : "audio";
+			const track = tracks.find((t) => t.kind === desiredKind) ?? tracks[0];
 
-			const clip: Clip = {
+			const trackPosition = computeAppendPosition(track.clips);
+
+			const baseClip: Clip = {
 				id: uuidv4(),
 				sourceFile: media.filePath,
 				fileName: media.fileName,
@@ -437,9 +551,14 @@ export function useProjectReducer() {
 				duration: media.duration,
 				width: media.width,
 				height: media.height,
+				hasAudio: media.hasAudio,
+				hasVideo: media.hasVideo,
+				volume: 1,
+				fadeIn: 0,
+				fadeOut: 0,
 			};
 
-			dispatch({ type: "ADD_CLIP", payload: { clip, trackId: track.id } });
+			dispatch({ type: "ADD_CLIP", payload: { clip: baseClip, trackId: track.id } });
 		},
 		[state.current.tracks],
 	);
@@ -451,4 +570,50 @@ export function useProject(): ProjectContextValue {
 	const ctx = useContext(ProjectContext);
 	if (!ctx) throw new Error("useProject must be used within ProjectContext");
 	return ctx;
+}
+
+export function normalizeLoadedProject(raw: unknown): Project {
+	if (typeof raw !== "object" || raw === null) {
+		throw new Error("プロジェクトファイル形式が不正です");
+	}
+	const candidate = raw as Partial<Project> & { tracks?: unknown; markers?: unknown };
+	if (!Array.isArray(candidate.tracks)) {
+		throw new Error("プロジェクトファイル形式が不正です: tracks が配列ではありません");
+	}
+	const tracks: Track[] = candidate.tracks.map((t: unknown) => {
+		const tr = t as Partial<Track> & { clips?: unknown; kind?: unknown };
+		const kind: TrackKind = tr.kind === "audio" ? "audio" : "video";
+		const clips: Clip[] = Array.isArray(tr.clips)
+			? tr.clips.map((c: unknown) => {
+					const cl = c as Partial<Clip>;
+					const duration = cl.duration ?? (cl.outPoint ?? 0) - (cl.inPoint ?? 0);
+					return {
+						id: cl.id ?? uuidv4(),
+						sourceFile: cl.sourceFile ?? "",
+						fileName: cl.fileName ?? "",
+						inPoint: cl.inPoint ?? 0,
+						outPoint: cl.outPoint ?? duration,
+						trackPosition: cl.trackPosition ?? 0,
+						duration,
+						width: cl.width ?? 0,
+						height: cl.height ?? 0,
+						hasAudio: cl.hasAudio ?? true,
+						hasVideo: cl.hasVideo ?? kind === "video",
+						volume: cl.volume ?? 1,
+						fadeIn: cl.fadeIn ?? 0,
+						fadeOut: cl.fadeOut ?? 0,
+					};
+				})
+			: [];
+		return {
+			id: tr.id ?? uuidv4(),
+			kind,
+			clips,
+			volume: tr.volume ?? 1,
+			muted: tr.muted ?? false,
+			solo: tr.solo ?? false,
+		};
+	});
+	const markers = Array.isArray(candidate.markers) ? (candidate.markers as Project["markers"]) : [];
+	return { tracks, markers };
 }

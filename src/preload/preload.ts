@@ -1,22 +1,54 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+export interface MediaImportResult {
+	filePath: string;
+	fileName: string;
+	duration: number;
+	width: number;
+	height: number;
+	hasAudio: boolean;
+	hasVideo: boolean;
+}
+
+export interface ExportClipIPC {
+	sourceFile: string;
+	inPoint: number;
+	outPoint: number;
+	trackPosition: number;
+	volume: number;
+	fadeIn: number;
+	fadeOut: number;
+	hasAudio: boolean;
+	hasVideo: boolean;
+}
+
+export interface ExportTrackIPC {
+	id: string;
+	kind: "video" | "audio";
+	volume: number;
+	muted: boolean;
+	solo: boolean;
+	clips: ExportClipIPC[];
+}
+
+export interface ExportPayloadIPC {
+	videoEdl: Array<{ sourceFile: string; inPoint: number; outPoint: number }>;
+	audioTracks: ExportTrackIPC[];
+	totalDuration: number;
+}
+
+export interface WaveformIPCResult {
+	sampleRate: number;
+	channels: number;
+	peaks: number[];
+}
+
 export interface ElectronAPI {
-	importFile: () => Promise<{
-		filePath: string;
-		fileName: string;
-		duration: number;
-		width: number;
-		height: number;
-	} | null>;
-	exportProject: (
-		edl: Array<{
-			sourceFile: string;
-			inPoint: number;
-			outPoint: number;
-		}>,
-	) => Promise<string | null>;
+	importFile: () => Promise<MediaImportResult | null>;
+	exportProject: (payload: ExportPayloadIPC) => Promise<string | null>;
 	onExportProgress: (callback: (progress: number) => void) => () => void;
 	getMediaUrl: (filePath: string) => string;
+	getWaveform: (filePath: string) => Promise<WaveformIPCResult>;
 	saveProject: (filePath: string | null, data: string) => Promise<string | null>;
 	saveProjectAs: (data: string) => Promise<string | null>;
 	openProject: () => Promise<{ filePath: string; content: string } | null>;
@@ -38,14 +70,14 @@ function onMenu(channel: string, callback: () => void) {
 
 contextBridge.exposeInMainWorld("api", {
 	importFile: () => ipcRenderer.invoke("file:import"),
-	exportProject: (edl: Array<{ sourceFile: string; inPoint: number; outPoint: number }>) =>
-		ipcRenderer.invoke("file:export", edl),
+	exportProject: (payload: ExportPayloadIPC) => ipcRenderer.invoke("file:export", payload),
 	onExportProgress: (callback: (progress: number) => void) => {
 		const handler = (_event: Electron.IpcRendererEvent, progress: number) => callback(progress);
 		ipcRenderer.on("export:progress", handler);
 		return () => ipcRenderer.removeListener("export:progress", handler);
 	},
 	getMediaUrl: (filePath: string) => `media-loader://${encodeURIComponent(filePath)}`,
+	getWaveform: (filePath: string) => ipcRenderer.invoke("media:waveform", filePath),
 	saveProject: (filePath: string | null, data: string) =>
 		ipcRenderer.invoke("project:save", { filePath, data }),
 	saveProjectAs: (data: string) => ipcRenderer.invoke("project:saveAs", data),

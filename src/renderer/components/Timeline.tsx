@@ -65,8 +65,12 @@ export function Timeline({
 		dispatch({ type: "SELECT_CLIP", payload: { clipId: null } });
 	}, [dispatch]);
 
-	const handleAddTrack = useCallback(() => {
-		dispatch({ type: "ADD_TRACK" });
+	const handleAddVideoTrack = useCallback(() => {
+		dispatch({ type: "ADD_TRACK", payload: { kind: "video" } });
+	}, [dispatch]);
+
+	const handleAddAudioTrack = useCallback(() => {
+		dispatch({ type: "ADD_TRACK", payload: { kind: "audio" } });
 	}, [dispatch]);
 
 	const handleRemoveMarker = useCallback(
@@ -377,27 +381,44 @@ export function Timeline({
 					</div>
 
 					<div className="timeline-tracks" onClick={handleDeselect}>
-						{tracks.map((track, i) => (
-							<Track
-								key={track.id}
-								track={track}
-								trackIndex={i}
-								pixelsPerSecond={pixelsPerSecond}
-								selectedClipId={state.selectedClipId}
-								currentTime={currentTime}
-								allTracks={tracks}
-								markers={markers}
-								snapThresholdPx={SNAP_THRESHOLD_PX}
-							/>
-						))}
+						{(() => {
+							let videoCount = 0;
+							let audioCount = 0;
+							return tracks.map((track) => {
+								const videoIdx = track.kind === "video" ? videoCount++ : videoCount;
+								const audioIdx = track.kind === "audio" ? audioCount++ : audioCount;
+								return (
+									<Track
+										key={track.id}
+										track={track}
+										videoIndex={videoIdx}
+										audioIndex={audioIdx}
+										pixelsPerSecond={pixelsPerSecond}
+										selectedClipId={state.selectedClipId}
+										currentTime={currentTime}
+										allTracks={tracks}
+										markers={markers}
+										snapThresholdPx={SNAP_THRESHOLD_PX}
+									/>
+								);
+							});
+						})()}
 						<div className="add-track-row">
 							<button
 								type="button"
 								className="add-track-btn"
-								onClick={handleAddTrack}
-								title="トラック追加"
+								onClick={handleAddVideoTrack}
+								title="ビデオトラック追加"
 							>
-								+
+								+V
+							</button>
+							<button
+								type="button"
+								className="add-track-btn"
+								onClick={handleAddAudioTrack}
+								title="オーディオトラック追加"
+							>
+								+A
 							</button>
 						</div>
 					</div>
