@@ -1,14 +1,16 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { useProject } from "../hooks/useProject";
+import { findClipTrack, useProject } from "../hooks/useProject";
 import { formatTime } from "../utils/time";
 import { Track } from "./Track";
 
 interface TimelineProps {
 	currentTime: number;
 	totalDuration: number;
+	isPlaying: boolean;
 	onSeek: (time: number) => void;
 	onSetTotalDuration: (duration: number) => void;
+	onTogglePlayPause: () => void;
 }
 
 const PIXELS_PER_SECOND = 50;
@@ -17,8 +19,10 @@ const RULER_HEIGHT = 24;
 export function Timeline({
 	currentTime,
 	totalDuration,
+	isPlaying,
 	onSeek,
 	onSetTotalDuration,
+	onTogglePlayPause,
 }: TimelineProps) {
 	const { state, dispatch } = useProject();
 	const timelineRef = useRef<HTMLDivElement>(null);
@@ -59,37 +63,137 @@ export function Timeline({
 		dispatch({ type: "ADD_TRACK" });
 	}, [dispatch]);
 
-	// Keyboard shortcuts
+	const shortcutStateRef = useRef({
+		selectedClipId: state.selectedClipId,
+		currentTime,
+		totalDuration,
+		tracks,
+		isPlaying,
+		onSeek,
+		onTogglePlayPause,
+	});
+	shortcutStateRef.current = {
+		selectedClipId: state.selectedClipId,
+		currentTime,
+		totalDuration,
+		tracks,
+		isPlaying,
+		onSeek,
+		onTogglePlayPause,
+	};
+
 	useEffect(() => {
+		const isEditableTarget = (target: EventTarget | null): boolean => {
+			if (!(target instanceof HTMLElement)) return false;
+			const tag = target.tagName;
+			return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
+		};
+
 		const handleKeyDown = (e: KeyboardEvent) => {
+			if (isEditableTarget(e.target)) return;
+
+			const s = shortcutStateRef.current;
+			const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+
 			if (e.key === "Delete" || e.key === "Backspace") {
-				if (state.selectedClipId) {
+				if (s.selectedClipId) {
 					e.preventDefault();
-					dispatch({ type: "REMOVE_CLIP", payload: { clipId: state.selectedClipId } });
+					dispatch({ type: "REMOVE_CLIP", payload: { clipId: s.selectedClipId } });
 				}
+				return;
 			}
-			if (e.key === "s" || e.key === "S") {
-				if (state.selectedClipId && !e.metaKey && !e.ctrlKey) {
+
+			if ((e.metaKey || e.ctrlKey) && key === "z") {
+				e.preventDefault();
+				dispatch({ type: e.shiftKey ? "REDO" : "UNDO" });
+				return;
+			}
+
+			if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+			if (e.code === "Space") {
+				e.preventDefault();
+				s.onTogglePlayPause();
+				return;
+			}
+
+			if (key === "Home") {
+				e.preventDefault();
+				s.onSeek(0);
+				return;
+			}
+
+			if (key === "End") {
+				e.preventDefault();
+				s.onSeek(s.totalDuration);
+				return;
+			}
+
+			if (key === "ArrowLeft") {
+				e.preventDefault();
+				s.onSeek(Math.max(0, s.currentTime - (e.shiftKey ? 1 : 1 / 30)));
+				return;
+			}
+
+			if (key === "ArrowRight") {
+				e.preventDefault();
+				s.onSeek(Math.min(s.totalDuration, s.currentTime + (e.shiftKey ? 1 : 1 / 30)));
+				return;
+			}
+
+			if (key === "s") {
+				if (s.selectedClipId) {
 					e.preventDefault();
 					dispatch({
 						type: "SPLIT_CLIP",
-						payload: { clipId: state.selectedClipId, splitTime: currentTime },
+						payload: { clipId: s.selectedClipId, splitTime: s.currentTime },
 					});
 				}
+				return;
 			}
-			if ((e.metaKey || e.ctrlKey) && (e.key === "z" || e.key === "Z")) {
+
+			if (key === "j") {
 				e.preventDefault();
-				if (e.shiftKey) {
-					dispatch({ type: "REDO" });
-				} else {
-					dispatch({ type: "UNDO" });
+				s.onSeek(Math.max(0, s.currentTime - 2));
+				return;
+			}
+
+			if (key === "k") {
+				e.preventDefault();
+				if (s.isPlaying) s.onTogglePlayPause();
+				return;
+			}
+
+			if (key === "l") {
+				e.preventDefault();
+				if (!s.isPlaying) s.onTogglePlayPause();
+				return;
+			}
+
+			if (key === "i" || key === "o") {
+				if (!s.selectedClipId) return;
+				const found = findClipTrack(s.tracks, s.selectedClipId);
+				if (!found) return;
+				e.preventDefault();
+				const relative = s.currentTime - found.clip.trackPosition;
+				const point = found.clip.inPoint + relative;
+				if (key === "i" && point >= 0 && point < found.clip.outPoint) {
+					dispatch({
+						type: "TRIM_CLIP",
+						payload: { clipId: s.selectedClipId, inPoint: point },
+					});
+				} else if (key === "o" && point > found.clip.inPoint && point <= found.clip.duration) {
+					dispatch({
+						type: "TRIM_CLIP",
+						payload: { clipId: s.selectedClipId, outPoint: point },
+					});
 				}
 			}
 		};
 
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [state.selectedClipId, currentTime, dispatch]);
+	}, [dispatch]);
 
 	useEffect(() => {
 		const unsubscribeUndo = window.api.onMenuUndo(() => dispatch({ type: "UNDO" }));

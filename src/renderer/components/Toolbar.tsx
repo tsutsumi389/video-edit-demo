@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { useProject } from "../hooks/useProject";
-import { flattenTracks } from "../utils/flatten";
 import { formatTime } from "../utils/time";
 
 interface ToolbarProps {
@@ -8,6 +7,14 @@ interface ToolbarProps {
 	currentTime: number;
 	totalDuration: number;
 	onTogglePlayPause: () => void;
+	onImport: () => void;
+	onExport: () => void;
+	onSave: () => void;
+	onSaveAs: () => void;
+	onOpen: () => void;
+	onNew: () => void;
+	projectFilePath: string | null;
+	exportProgress: number | null;
 }
 
 export function Toolbar({
@@ -15,9 +22,16 @@ export function Toolbar({
 	currentTime,
 	totalDuration,
 	onTogglePlayPause,
+	onImport,
+	onExport,
+	onSave,
+	onSaveAs,
+	onOpen,
+	onNew,
+	projectFilePath,
+	exportProgress,
 }: ToolbarProps) {
-	const { state, dispatch, addClipFromMedia } = useProject();
-	const [exportProgress, setExportProgress] = useState<number | null>(null);
+	const { state, dispatch } = useProject();
 	const [menuOpen, setMenuOpen] = useState<string | null>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
 
@@ -31,30 +45,6 @@ export function Toolbar({
 		document.addEventListener("mousedown", handler);
 		return () => document.removeEventListener("mousedown", handler);
 	}, [menuOpen]);
-
-	const handleImport = async () => {
-		const result = await window.api.importFile();
-		if (result) {
-			addClipFromMedia(result);
-		}
-	};
-
-	const handleExport = async () => {
-		const edl = flattenTracks(state.current.tracks);
-		if (edl.length === 0) return;
-
-		setExportProgress(0);
-		const cleanup = window.api.onExportProgress((progress) => {
-			setExportProgress(progress);
-		});
-
-		try {
-			await window.api.exportProject(edl);
-		} finally {
-			cleanup();
-			setExportProgress(null);
-		}
-	};
 
 	const hasClips = state.current.tracks.some((t) => t.clips.length > 0);
 	const hasSelection = state.selectedClipId !== null;
@@ -76,6 +66,10 @@ export function Toolbar({
 		}
 	};
 
+	const projectLabel = projectFilePath
+		? (projectFilePath.split("/").pop() ?? projectFilePath)
+		: "未保存";
+
 	return (
 		<div className="toolbar">
 			<div className="toolbar-left">
@@ -95,7 +89,48 @@ export function Toolbar({
 									className="menu-dropdown-item"
 									onClick={() => {
 										setMenuOpen(null);
-										handleImport();
+										onNew();
+									}}
+								>
+									新規プロジェクト
+								</button>
+								<button
+									type="button"
+									className="menu-dropdown-item"
+									onClick={() => {
+										setMenuOpen(null);
+										onOpen();
+									}}
+								>
+									プロジェクトを開く...
+								</button>
+								<button
+									type="button"
+									className="menu-dropdown-item"
+									onClick={() => {
+										setMenuOpen(null);
+										onSave();
+									}}
+								>
+									保存
+								</button>
+								<button
+									type="button"
+									className="menu-dropdown-item"
+									onClick={() => {
+										setMenuOpen(null);
+										onSaveAs();
+									}}
+								>
+									名前を付けて保存...
+								</button>
+								<div className="menu-separator" />
+								<button
+									type="button"
+									className="menu-dropdown-item"
+									onClick={() => {
+										setMenuOpen(null);
+										onImport();
 									}}
 								>
 									インポート...
@@ -105,7 +140,7 @@ export function Toolbar({
 									className="menu-dropdown-item"
 									onClick={() => {
 										setMenuOpen(null);
-										handleExport();
+										onExport();
 									}}
 									disabled={!hasClips || exportProgress !== null}
 								>
@@ -116,6 +151,9 @@ export function Toolbar({
 							</div>
 						)}
 					</div>
+					<span className="project-label" title={projectFilePath ?? undefined}>
+						{projectLabel}
+					</span>
 				</div>
 			</div>
 
