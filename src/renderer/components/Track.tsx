@@ -1,4 +1,4 @@
-import type { Track as TrackType } from "../types/project";
+import type { Marker, Track as TrackType } from "../types/project";
 import { Clip } from "./Clip";
 
 interface TrackProps {
@@ -7,6 +7,9 @@ interface TrackProps {
 	pixelsPerSecond: number;
 	selectedClipId: string | null;
 	currentTime: number;
+	allTracks: TrackType[];
+	markers: Marker[];
+	snapThresholdPx: number;
 }
 
 export function Track({
@@ -15,6 +18,9 @@ export function Track({
 	pixelsPerSecond,
 	selectedClipId,
 	currentTime,
+	allTracks,
+	markers,
+	snapThresholdPx,
 }: TrackProps) {
 	return (
 		<div className="track" data-track-id={track.id}>
@@ -28,6 +34,9 @@ export function Track({
 						pixelsPerSecond={pixelsPerSecond}
 						isSelected={clip.id === selectedClipId}
 						currentTime={currentTime}
+						allTracks={allTracks}
+						markers={markers}
+						snapThresholdPx={snapThresholdPx}
 					/>
 				))}
 			</div>

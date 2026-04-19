@@ -1,7 +1,7 @@
 import type React from "react";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { findClipTrack, useProject } from "../hooks/useProject";
-import { formatTime } from "../utils/time";
+import { clamp, formatTime } from "../utils/time";
 import { Track } from "./Track";
 
 interface TimelineProps {
@@ -13,8 +13,12 @@ interface TimelineProps {
 	onTogglePlayPause: () => void;
 }
 
-const PIXELS_PER_SECOND = 50;
+const DEFAULT_PIXELS_PER_SECOND = 50;
+const MIN_PIXELS_PER_SECOND = 10;
+const MAX_PIXELS_PER_SECOND = 400;
+const ZOOM_STEP = 1.15;
 const RULER_HEIGHT = 24;
+const SNAP_THRESHOLD_PX = 8;
 
 export function Timeline({
 	currentTime,
@@ -26,8 +30,10 @@ export function Timeline({
 }: TimelineProps) {
 	const { state, dispatch } = useProject();
 	const timelineRef = useRef<HTMLDivElement>(null);
+	const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_PIXELS_PER_SECOND);
 
 	const tracks = state.current.tracks;
+	const markers = state.current.markers;
 
 	useEffect(() => {
 		const maxEnd = tracks.reduce((max, track) => {
@@ -42,17 +48,17 @@ export function Timeline({
 		}
 	}, [tracks, totalDuration, onSetTotalDuration]);
 
-	const timelineWidth = Math.max((totalDuration + 5) * PIXELS_PER_SECOND, 800);
-	const playheadLeft = currentTime * PIXELS_PER_SECOND;
+	const timelineWidth = Math.max((totalDuration + 5) * pixelsPerSecond, 800);
+	const playheadLeft = currentTime * pixelsPerSecond;
 
 	const handleRulerClick = useCallback(
 		(e: React.MouseEvent) => {
 			const rect = e.currentTarget.getBoundingClientRect();
 			const x = e.clientX - rect.left + (timelineRef.current?.scrollLeft ?? 0);
-			const time = x / PIXELS_PER_SECOND;
+			const time = x / pixelsPerSecond;
 			onSeek(time);
 		},
-		[onSeek],
+		[onSeek, pixelsPerSecond],
 	);
 
 	const handleDeselect = useCallback(() => {
@@ -63,8 +69,53 @@ export function Timeline({
 		dispatch({ type: "ADD_TRACK" });
 	}, [dispatch]);
 
+	const handleRemoveMarker = useCallback(
+		(e: React.MouseEvent, markerId: string) => {
+			e.preventDefault();
+			e.stopPropagation();
+			dispatch({ type: "REMOVE_MARKER", payload: { markerId } });
+		},
+		[dispatch],
+	);
+
+	const handleMarkerClick = useCallback(
+		(e: React.MouseEvent, time: number) => {
+			e.stopPropagation();
+			onSeek(time);
+		},
+		[onSeek],
+	);
+
+	const ppsRef = useRef(pixelsPerSecond);
+	ppsRef.current = pixelsPerSecond;
+
+	useEffect(() => {
+		const container = timelineRef.current;
+		if (!container) return;
+
+		const onWheel = (e: WheelEvent) => {
+			if (!(e.ctrlKey || e.metaKey)) return;
+			e.preventDefault();
+			const pps = ppsRef.current;
+			const rect = container.getBoundingClientRect();
+			const cursorX = e.clientX - rect.left + container.scrollLeft;
+			const cursorTime = cursorX / pps;
+			const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+			const next = clamp(pps * factor, MIN_PIXELS_PER_SECOND, MAX_PIXELS_PER_SECOND);
+			setPixelsPerSecond(next);
+			requestAnimationFrame(() => {
+				if (!timelineRef.current) return;
+				timelineRef.current.scrollLeft = cursorTime * next - (e.clientX - rect.left);
+			});
+		};
+
+		container.addEventListener("wheel", onWheel, { passive: false });
+		return () => container.removeEventListener("wheel", onWheel);
+	}, []);
+
 	const shortcutStateRef = useRef({
 		selectedClipId: state.selectedClipId,
+		clipboard: state.clipboard,
 		currentTime,
 		totalDuration,
 		tracks,
@@ -74,6 +125,7 @@ export function Timeline({
 	});
 	shortcutStateRef.current = {
 		selectedClipId: state.selectedClipId,
+		clipboard: state.clipboard,
 		currentTime,
 		totalDuration,
 		tracks,
@@ -98,7 +150,10 @@ export function Timeline({
 			if (e.key === "Delete" || e.key === "Backspace") {
 				if (s.selectedClipId) {
 					e.preventDefault();
-					dispatch({ type: "REMOVE_CLIP", payload: { clipId: s.selectedClipId } });
+					dispatch({
+						type: e.shiftKey ? "RIPPLE_DELETE_CLIP" : "REMOVE_CLIP",
+						payload: { clipId: s.selectedClipId },
+					});
 				}
 				return;
 			}
@@ -109,11 +164,46 @@ export function Timeline({
 				return;
 			}
 
+			if ((e.metaKey || e.ctrlKey) && key === "c") {
+				if (s.selectedClipId) {
+					e.preventDefault();
+					dispatch({ type: "COPY_CLIP", payload: { clipId: s.selectedClipId } });
+				}
+				return;
+			}
+
+			if ((e.metaKey || e.ctrlKey) && key === "v") {
+				if (!s.clipboard) return;
+				e.preventDefault();
+				const selected = s.selectedClipId ? findClipTrack(s.tracks, s.selectedClipId) : null;
+				const trackId = selected?.track.id ?? s.tracks[0]?.id;
+				if (!trackId) return;
+				dispatch({
+					type: "PASTE_CLIP",
+					payload: { trackId, trackPosition: s.currentTime, ripple: true },
+				});
+				return;
+			}
+
+			if ((e.metaKey || e.ctrlKey) && key === "d") {
+				if (s.selectedClipId) {
+					e.preventDefault();
+					dispatch({ type: "DUPLICATE_CLIP", payload: { clipId: s.selectedClipId } });
+				}
+				return;
+			}
+
 			if (e.metaKey || e.ctrlKey || e.altKey) return;
 
 			if (e.code === "Space") {
 				e.preventDefault();
 				s.onTogglePlayPause();
+				return;
+			}
+
+			if (key === "m") {
+				e.preventDefault();
+				dispatch({ type: "ADD_MARKER", payload: { time: s.currentTime } });
 				return;
 			}
 
@@ -204,65 +294,117 @@ export function Timeline({
 		};
 	}, [dispatch]);
 
-	// Ruler tick marks
 	const ticks = useMemo(() => {
 		const result: { x: number; label: string; major: boolean }[] = [];
-		const step = 1;
-		for (let t = 0; t <= totalDuration + 5; t += step) {
+		// Pick the smallest step that keeps major labels ≥ minLabelSpacingPx apart at the current zoom.
+		const minLabelSpacingPx = 60;
+		const rawStep = minLabelSpacingPx / pixelsPerSecond;
+		const candidates = [0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600];
+		const majorStep = candidates.find((c) => c >= rawStep) ?? 600;
+		const minorStep = majorStep / 5;
+		for (let t = 0; t <= totalDuration + 5; t += minorStep) {
+			const isMajor = Math.abs(t / majorStep - Math.round(t / majorStep)) < 1e-6;
 			result.push({
-				x: t * PIXELS_PER_SECOND,
-				label: t % 5 === 0 ? formatTime(t) : "",
-				major: t % 5 === 0,
+				x: t * pixelsPerSecond,
+				label: isMajor ? formatTime(t) : "",
+				major: isMajor,
 			});
 		}
 		return result;
-	}, [totalDuration]);
+	}, [totalDuration, pixelsPerSecond]);
+
+	const zoomPercent = Math.round((pixelsPerSecond / DEFAULT_PIXELS_PER_SECOND) * 100);
+	const handleZoomIn = useCallback(() => {
+		setPixelsPerSecond((v) => clamp(v * ZOOM_STEP, MIN_PIXELS_PER_SECOND, MAX_PIXELS_PER_SECOND));
+	}, []);
+	const handleZoomOut = useCallback(() => {
+		setPixelsPerSecond((v) => clamp(v / ZOOM_STEP, MIN_PIXELS_PER_SECOND, MAX_PIXELS_PER_SECOND));
+	}, []);
+	const handleZoomReset = useCallback(() => {
+		setPixelsPerSecond(DEFAULT_PIXELS_PER_SECOND);
+	}, []);
 
 	return (
-		<div className="timeline" ref={timelineRef}>
-			<div className="timeline-content" style={{ width: `${timelineWidth}px` }}>
-				{/* Ruler */}
-				<div
-					className="timeline-ruler"
-					style={{ height: `${RULER_HEIGHT}px` }}
-					onClick={handleRulerClick}
+		<div className="timeline-container">
+			<div className="timeline-toolbar">
+				<button type="button" className="zoom-btn" onClick={handleZoomOut} title="縮小">
+					−
+				</button>
+				<button
+					type="button"
+					className="zoom-btn"
+					onClick={handleZoomReset}
+					title="ズーム リセット"
 				>
-					{ticks.map((tick) => (
-						<div
-							key={`tick-${tick.x}`}
-							className={`ruler-tick ${tick.major ? "ruler-tick-major" : ""}`}
-							style={{ left: `${tick.x}px` }}
-						>
-							{tick.label && <span className="ruler-label">{tick.label}</span>}
-						</div>
-					))}
-				</div>
-
-				<div className="timeline-tracks" onClick={handleDeselect}>
-					{tracks.map((track, i) => (
-						<Track
-							key={track.id}
-							track={track}
-							trackIndex={i}
-							pixelsPerSecond={PIXELS_PER_SECOND}
-							selectedClipId={state.selectedClipId}
-							currentTime={currentTime}
-						/>
-					))}
-					<div className="add-track-row">
-						<button
-							type="button"
-							className="add-track-btn"
-							onClick={handleAddTrack}
-							title="トラック追加"
-						>
-							+
-						</button>
+					{zoomPercent}%
+				</button>
+				<button type="button" className="zoom-btn" onClick={handleZoomIn} title="拡大">
+					+
+				</button>
+				<span className="timeline-hint">Ctrl+ホイールでズーム / M でマーカー</span>
+			</div>
+			<div className="timeline" ref={timelineRef}>
+				<div className="timeline-content" style={{ width: `${timelineWidth}px` }}>
+					{/* Ruler */}
+					<div
+						className="timeline-ruler"
+						style={{ height: `${RULER_HEIGHT}px` }}
+						onClick={handleRulerClick}
+					>
+						{ticks.map((tick) => (
+							<div
+								key={`tick-${tick.x}`}
+								className={`ruler-tick ${tick.major ? "ruler-tick-major" : ""}`}
+								style={{ left: `${tick.x}px` }}
+							>
+								{tick.label && <span className="ruler-label">{tick.label}</span>}
+							</div>
+						))}
+						{markers.map((m) => (
+							<button
+								type="button"
+								key={m.id}
+								className="timeline-marker"
+								style={{ left: `${m.time * pixelsPerSecond}px` }}
+								title={`${m.label} (${formatTime(m.time)}) — 右クリで削除`}
+								onClick={(e) => handleMarkerClick(e, m.time)}
+								onContextMenu={(e) => handleRemoveMarker(e, m.id)}
+							>
+								<span className="marker-flag" />
+								<span className="marker-label">{m.label}</span>
+							</button>
+						))}
 					</div>
-				</div>
 
-				{/* Playhead */}
-				<div className="playhead" style={{ left: `${playheadLeft}px` }} />
+					<div className="timeline-tracks" onClick={handleDeselect}>
+						{tracks.map((track, i) => (
+							<Track
+								key={track.id}
+								track={track}
+								trackIndex={i}
+								pixelsPerSecond={pixelsPerSecond}
+								selectedClipId={state.selectedClipId}
+								currentTime={currentTime}
+								allTracks={tracks}
+								markers={markers}
+								snapThresholdPx={SNAP_THRESHOLD_PX}
+							/>
+						))}
+						<div className="add-track-row">
+							<button
+								type="button"
+								className="add-track-btn"
+								onClick={handleAddTrack}
+								title="トラック追加"
+							>
+								+
+							</button>
+						</div>
+					</div>
+
+					{/* Playhead */}
+					<div className="playhead" style={{ left: `${playheadLeft}px` }} />
+				</div>
 			</div>
 		</div>
 	);

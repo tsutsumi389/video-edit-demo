@@ -195,11 +195,50 @@ body {
 }
 
 /* Timeline */
+.timeline-container {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	flex-shrink: 0;
+}
+
+.timeline-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 12px;
+	background: #16213e;
+	border-top: 1px solid #0f3460;
+	border-bottom: 1px solid #0f3460;
+}
+
+.zoom-btn {
+	min-width: 36px;
+	height: 22px;
+	padding: 0 8px;
+	border: 1px solid #0f3460;
+	border-radius: 3px;
+	background: #1a1a2e;
+	color: #e0e0e0;
+	cursor: pointer;
+	font-size: 11px;
+	font-family: "SF Mono", "Fira Code", monospace;
+}
+
+.zoom-btn:hover {
+	background: #0f3460;
+}
+
+.timeline-hint {
+	margin-left: auto;
+	font-size: 11px;
+	color: #666;
+}
+
 .timeline {
 	min-height: 120px;
 	max-height: 400px;
 	background: #16213e;
-	border-top: 1px solid #0f3460;
 	overflow-x: auto;
 	overflow-y: auto;
 	flex-shrink: 0;
@@ -238,6 +277,40 @@ body {
 	font-size: 10px;
 	color: #888;
 	white-space: nowrap;
+}
+
+.timeline-marker {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 0;
+	padding: 0;
+	background: transparent;
+	border: none;
+	cursor: pointer;
+	display: flex;
+	align-items: flex-start;
+	z-index: 5;
+}
+
+.marker-flag {
+	position: absolute;
+	top: 2px;
+	left: -5px;
+	width: 10px;
+	height: 12px;
+	background: #f5a623;
+	clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%);
+}
+
+.marker-label {
+	position: absolute;
+	top: 2px;
+	left: 8px;
+	font-size: 10px;
+	color: #f5a623;
+	white-space: nowrap;
+	pointer-events: none;
 }
 
 /* Tracks */

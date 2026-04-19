@@ -49,6 +49,7 @@ function AppInner() {
 			const data: ProjectFile = {
 				version: PROJECT_FILE_VERSION,
 				tracks: project.state.current.tracks,
+				markers: project.state.current.markers,
 			};
 			const json = JSON.stringify(data, null, 2);
 			try {
@@ -63,7 +64,7 @@ function AppInner() {
 				showToast(`保存に失敗しました: ${(err as Error).message}`, "error");
 			}
 		},
-		[project.state.current.tracks, projectFilePath, showToast],
+		[project.state.current.tracks, project.state.current.markers, projectFilePath, showToast],
 	);
 
 	const handleOpen = useCallback(async () => {
@@ -76,7 +77,12 @@ function AppInner() {
 			}
 			project.dispatch({
 				type: "LOAD_PROJECT",
-				payload: { project: { tracks: parsed.tracks } },
+				payload: {
+					project: {
+						tracks: parsed.tracks,
+						markers: Array.isArray(parsed.markers) ? parsed.markers : [],
+					},
+				},
 			});
 			setProjectFilePath(result.filePath);
 			playback.seek(0);
@@ -89,7 +95,7 @@ function AppInner() {
 	const handleNew = useCallback(() => {
 		project.dispatch({
 			type: "LOAD_PROJECT",
-			payload: { project: { tracks: [{ id: "track-1", clips: [] }] } },
+			payload: { project: { tracks: [{ id: "track-1", clips: [] }], markers: [] } },
 		});
 		setProjectFilePath(null);
 		playback.seek(0);
