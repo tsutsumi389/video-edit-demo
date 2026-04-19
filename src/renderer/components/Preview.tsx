@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useProject } from "../hooks/useProject";
-import type { Clip, Track, Transition } from "../types/project";
+import type { Clip, ClipCrop, ClipTransform, Track, Transition } from "../types/project";
+import { interpolateKeyframes } from "../utils/keyframes";
+import { clamp } from "../utils/time";
 
 interface PreviewProps {
 	currentTime: number;
@@ -80,17 +82,33 @@ function computeTransitionGain(
 
 function buildVideoFilterString(clip: Clip): string {
 	const { brightness, contrast, saturation } = clip.filter;
-	// CSS brightness: 1 = neutral. Map ffmpeg-like brightness (-1..1) → CSS multiplier.
 	const cssBrightness = 1 + brightness;
 	return `brightness(${cssBrightness}) contrast(${contrast}) saturate(${saturation})`;
 }
 
-function buildVideoTransformString(clip: Clip): string {
-	const { scale, offsetX, offsetY } = clip.transform;
-	// offsetX/Y: -1..1 maps to -50%..50% of preview
+function buildVideoTransformStringFrom(transform: ClipTransform): string {
+	const { scale, offsetX, offsetY } = transform;
 	const translateX = offsetX * 50;
 	const translateY = offsetY * 50;
 	return `translate(${translateX}%, ${translateY}%) scale(${scale})`;
+}
+
+function effectiveTransform(clip: Clip, currentTime: number): ClipTransform {
+	if (clip.keyframes.length === 0) return clip.transform;
+	const localTime = (currentTime - clip.trackPosition) / (clip.speed || 1);
+	return interpolateKeyframes(clip.keyframes, clip.transform, localTime);
+}
+
+function buildClipPath(crop: ClipCrop): string {
+	const top = clamp(crop.top, 0, 1) * 100;
+	const right = clamp(crop.right, 0, 1) * 100;
+	const bottom = clamp(crop.bottom, 0, 1) * 100;
+	const left = clamp(crop.left, 0, 1) * 100;
+	return `inset(${top}% ${right}% ${bottom}% ${left}%)`;
+}
+
+function hasCrop(crop: ClipCrop): boolean {
+	return crop.top > 0 || crop.right > 0 || crop.bottom > 0 || crop.left > 0;
 }
 
 export function Preview({ currentTime, isPlaying }: PreviewProps) {
@@ -228,7 +246,11 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 	const hasVideoClips = videoTracks.some((t) => t.clips.length > 0);
 
 	const videoFilter = activeMedia ? buildVideoFilterString(activeMedia.clip) : "none";
-	const videoTransform = activeMedia ? buildVideoTransformString(activeMedia.clip) : "none";
+	const videoTransform = activeMedia
+		? buildVideoTransformStringFrom(effectiveTransform(activeMedia.clip, currentTime))
+		: "none";
+	const videoClipPath =
+		activeMedia && hasCrop(activeMedia.clip.crop) ? buildClipPath(activeMedia.clip.crop) : "none";
 	const videoOpacity = transitionInfo ? transitionInfo.outgoing : 1;
 
 	return (
@@ -242,6 +264,7 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 							filter: videoFilter,
 							transform: videoTransform,
 							opacity: videoOpacity,
+							clipPath: videoClipPath,
 						}}
 					/>
 					{transitionInfo?.incomingClip && transitionInfo.activeTransition && (
@@ -253,7 +276,7 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 						/>
 					)}
 					{overlays.map(({ clip, opacity }) => (
-						<OverlayLayer key={clip.id} clip={clip} opacity={opacity} />
+						<OverlayLayer key={clip.id} clip={clip} opacity={opacity} currentTime={currentTime} />
 					))}
 				</div>
 			) : (
@@ -305,7 +328,6 @@ function TransitionIncomingLayer({
 	}, [clip, currentTime]);
 
 	if (transitionKind === "fade-to-black") {
-		// During fade-to-black, the outgoing fades to black first, then incoming fades in.
 		return null;
 	}
 
@@ -316,14 +338,23 @@ function TransitionIncomingLayer({
 			style={{
 				opacity,
 				filter: buildVideoFilterString(clip),
-				transform: buildVideoTransformString(clip),
+				transform: buildVideoTransformStringFrom(effectiveTransform(clip, currentTime)),
+				clipPath: hasCrop(clip.crop) ? buildClipPath(clip.crop) : "none",
 			}}
 		/>
 	);
 }
 
-function OverlayLayer({ clip, opacity }: { clip: Clip; opacity: number }) {
-	const transform = buildVideoTransformString(clip);
+function OverlayLayer({
+	clip,
+	opacity,
+	currentTime,
+}: {
+	clip: Clip;
+	opacity: number;
+	currentTime: number;
+}) {
+	const transform = buildVideoTransformStringFrom(effectiveTransform(clip, currentTime));
 
 	if (clip.kind === "text" && clip.text) {
 		return (

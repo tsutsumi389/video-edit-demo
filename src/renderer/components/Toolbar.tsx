@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useProject } from "../hooks/useProject";
+import { type TextStyle, TITLE_TEMPLATES } from "../types/project";
 import { formatTime } from "../utils/time";
 
 interface ToolbarProps {
@@ -13,8 +14,10 @@ interface ToolbarProps {
 	onSaveAs: () => void;
 	onOpen: () => void;
 	onNew: () => void;
-	onAddText: () => void;
+	onAddText: (style?: TextStyle, duration?: number) => void;
 	onAddImage: () => void;
+	onImportSrt: () => void;
+	onExportSrt: () => void;
 	projectFilePath: string | null;
 	exportProgress: number | null;
 }
@@ -32,19 +35,23 @@ export function Toolbar({
 	onNew,
 	onAddText,
 	onAddImage,
+	onImportSrt,
+	onExportSrt,
 	projectFilePath,
 	exportProgress,
 }: ToolbarProps) {
 	const { state, dispatch } = useProject();
 	const [menuOpen, setMenuOpen] = useState<string | null>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
+	const textMenuRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
 		if (menuOpen === null) return;
 		const handler = (e: MouseEvent) => {
-			if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-				setMenuOpen(null);
-			}
+			const target = e.target as Node;
+			const inFileMenu = menuRef.current?.contains(target);
+			const inTextMenu = textMenuRef.current?.contains(target);
+			if (!inFileMenu && !inTextMenu) setMenuOpen(null);
 		};
 		document.addEventListener("mousedown", handler);
 		return () => document.removeEventListener("mousedown", handler);
@@ -152,6 +159,27 @@ export function Toolbar({
 										? `エクスポート中 ${Math.round(exportProgress)}%`
 										: "エクスポート..."}
 								</button>
+								<div className="menu-separator" />
+								<button
+									type="button"
+									className="menu-dropdown-item"
+									onClick={() => {
+										setMenuOpen(null);
+										onImportSrt();
+									}}
+								>
+									字幕 SRT を読み込む...
+								</button>
+								<button
+									type="button"
+									className="menu-dropdown-item"
+									onClick={() => {
+										setMenuOpen(null);
+										onExportSrt();
+									}}
+								>
+									字幕 SRT を書き出す...
+								</button>
 							</div>
 						)}
 					</div>
@@ -206,14 +234,44 @@ export function Toolbar({
 				>
 					やり直す
 				</button>
-				<button
-					type="button"
-					className="toolbar-btn"
-					onClick={onAddText}
-					title="テキストクリップを追加"
-				>
-					テキスト
-				</button>
+				<div className="menu-item" ref={textMenuRef}>
+					<button
+						type="button"
+						className={`toolbar-btn ${menuOpen === "text" ? "menu-trigger-active" : ""}`}
+						onClick={() => setMenuOpen(menuOpen === "text" ? null : "text")}
+						title="テキストクリップを追加"
+					>
+						テキスト ▾
+					</button>
+					{menuOpen === "text" && (
+						<div className="menu-dropdown">
+							<button
+								type="button"
+								className="menu-dropdown-item"
+								onClick={() => {
+									setMenuOpen(null);
+									onAddText();
+								}}
+							>
+								空のテキスト
+							</button>
+							<div className="menu-separator" />
+							{TITLE_TEMPLATES.map((tpl) => (
+								<button
+									key={tpl.id}
+									type="button"
+									className="menu-dropdown-item"
+									onClick={() => {
+										setMenuOpen(null);
+										onAddText(tpl.style, tpl.duration);
+									}}
+								>
+									{tpl.label}
+								</button>
+							))}
+						</div>
+					)}
+				</div>
 				<button
 					type="button"
 					className="toolbar-btn"

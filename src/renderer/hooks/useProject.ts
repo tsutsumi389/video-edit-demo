@@ -2,11 +2,17 @@ import { createContext, useCallback, useContext, useReducer } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
 	type Clip,
+	type ClipCrop,
 	type ClipFilter,
 	type ClipTransform,
+	DEFAULT_CROP,
 	DEFAULT_FILTER,
 	DEFAULT_TEXT_STYLE,
 	DEFAULT_TRANSFORM,
+	KEYFRAME_SCALE_MAX,
+	KEYFRAME_SCALE_MIN,
+	type Keyframe,
+	type KeyframeTransform,
 	type MediaInfo,
 	type Project,
 	type ProjectAction,
@@ -15,6 +21,7 @@ import {
 	type TrackKind,
 	type Transition,
 } from "../types/project";
+import { interpolateKeyframes } from "../utils/keyframes";
 import { clamp } from "../utils/time";
 
 interface ProjectState {
@@ -119,6 +126,10 @@ function clampFadeBounds(clip: Clip, fadeIn: number, fadeOut: number): { in: num
 
 function dropTransitionsForClip(transitions: Transition[], clipId: string): Transition[] {
 	return transitions.filter((t) => t.clipAId !== clipId && t.clipBId !== clipId);
+}
+
+function cropsEqual(a: ClipCrop, b: ClipCrop): boolean {
+	return a.top === b.top && a.right === b.right && a.bottom === b.bottom && a.left === b.left;
 }
 
 function projectReducer(state: ProjectState, action: ProjectAction): ProjectState {
@@ -248,13 +259,24 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 			if (splitSourceTime <= clip.inPoint || splitSourceTime >= clip.outPoint) return state;
 
 			const newBId = uuidv4();
-			const clipA: Clip = { ...clip, outPoint: splitSourceTime, fadeOut: 0 };
+			const localSplitTime = relativeTime / clip.speed;
+			const keyframesA = clip.keyframes.filter((k) => k.time <= localSplitTime);
+			const keyframesB = clip.keyframes
+				.filter((k) => k.time > localSplitTime)
+				.map((k) => ({ ...k, time: k.time - localSplitTime }));
+			const clipA: Clip = {
+				...clip,
+				outPoint: splitSourceTime,
+				fadeOut: 0,
+				keyframes: keyframesA,
+			};
 			const clipB: Clip = {
 				...clip,
 				id: newBId,
 				inPoint: splitSourceTime,
 				trackPosition: clip.trackPosition + relativeTime,
 				fadeIn: 0,
+				keyframes: keyframesB,
 			};
 
 			const remappedTransitions = withUndo.current.transitions.map((tr) => {
@@ -445,6 +467,96 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
 		}
 
+		case "SET_CLIP_CROP": {
+			const { clipId, crop } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found) return state;
+			const existing = found.clip.crop;
+			const t = clamp(crop.top ?? existing.top, 0, 0.9);
+			const r = clamp(crop.right ?? existing.right, 0, 0.9);
+			const b = clamp(crop.bottom ?? existing.bottom, 0, 0.9);
+			const l = clamp(crop.left ?? existing.left, 0, 0.9);
+			const nextCrop: ClipCrop = {
+				top: t,
+				bottom: Math.min(b, Math.max(0, 0.95 - t)),
+				left: l,
+				right: Math.min(r, Math.max(0, 0.95 - l)),
+			};
+			if (cropsEqual(nextCrop, existing)) return state;
+			const newTracks = updateClipById(withUndo.current.tracks, clipId, (c) => ({
+				...c,
+				crop: nextCrop,
+			}));
+			if (!newTracks) return state;
+			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
+		}
+
+		case "ADD_KEYFRAME": {
+			const { clipId, time } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found) return state;
+			const clip = found.clip;
+			const playDuration = (clip.outPoint - clip.inPoint) / clip.speed;
+			const clampedTime = clamp(time, 0, playDuration);
+			if (clip.keyframes.some((k) => Math.abs(k.time - clampedTime) < 0.001)) return state;
+			const existing = clip.keyframes;
+			const baseTransform =
+				existing.length > 0
+					? interpolateKeyframes(existing, clip.transform, clampedTime)
+					: { ...clip.transform };
+			const newKf: Keyframe = {
+				id: uuidv4(),
+				time: clampedTime,
+				transform: baseTransform,
+			};
+			const newTracks = updateClipById(withUndo.current.tracks, clipId, (c) => ({
+				...c,
+				keyframes: [...c.keyframes, newKf].sort((a, b) => a.time - b.time),
+			}));
+			if (!newTracks) return state;
+			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
+		}
+
+		case "REMOVE_KEYFRAME": {
+			const { clipId, keyframeId } = action.payload;
+			const newTracks = updateClipById(withUndo.current.tracks, clipId, (c) => ({
+				...c,
+				keyframes: c.keyframes.filter((k) => k.id !== keyframeId),
+			}));
+			if (!newTracks) return state;
+			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
+		}
+
+		case "UPDATE_KEYFRAME": {
+			const { clipId, keyframeId, time, transform } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found) return state;
+			const playDuration = (found.clip.outPoint - found.clip.inPoint) / found.clip.speed;
+			const newTracks = updateClipById(withUndo.current.tracks, clipId, (c) => {
+				const kfs = c.keyframes
+					.map((k) => {
+						if (k.id !== keyframeId) return k;
+						const nextTime = time !== undefined ? clamp(time, 0, playDuration) : k.time;
+						const nextTransform: KeyframeTransform = transform
+							? {
+									scale: clamp(
+										transform.scale ?? k.transform.scale,
+										KEYFRAME_SCALE_MIN,
+										KEYFRAME_SCALE_MAX,
+									),
+									offsetX: clamp(transform.offsetX ?? k.transform.offsetX, -1, 1),
+									offsetY: clamp(transform.offsetY ?? k.transform.offsetY, -1, 1),
+								}
+							: k.transform;
+						return { ...k, time: nextTime, transform: nextTransform };
+					})
+					.sort((a, b) => a.time - b.time);
+				return { ...c, keyframes: kfs };
+			});
+			if (!newTracks) return state;
+			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
+		}
+
 		case "SET_CLIP_TEXT": {
 			const { clipId, text } = action.payload;
 			const found = findClipTrack(withUndo.current.tracks, clipId);
@@ -465,7 +577,7 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 		}
 
 		case "ADD_TEXT_CLIP": {
-			const { trackId, trackPosition, duration } = action.payload;
+			const { trackId, trackPosition, duration, style } = action.payload;
 			const targetTrack = withUndo.current.tracks.find((t) => t.id === trackId);
 			if (!targetTrack || targetTrack.kind !== "video") return state;
 			const newClipId = uuidv4();
@@ -474,7 +586,7 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 				id: newClipId,
 				kind: "text",
 				sourceFile: "",
-				fileName: "テキスト",
+				fileName: style?.text ? style.text.slice(0, 20) : "テキスト",
 				inPoint: 0,
 				outPoint: duration,
 				trackPosition: pos,
@@ -489,7 +601,9 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 				speed: 1,
 				filter: { ...DEFAULT_FILTER },
 				transform: { ...DEFAULT_TRANSFORM },
-				text: { ...DEFAULT_TEXT_STYLE },
+				crop: { ...DEFAULT_CROP },
+				keyframes: [],
+				text: style ? { ...style } : { ...DEFAULT_TEXT_STYLE },
 			};
 			return {
 				...withUndo,
@@ -530,6 +644,8 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 				speed: 1,
 				filter: { ...DEFAULT_FILTER },
 				transform: { ...DEFAULT_TRANSFORM },
+				crop: { ...DEFAULT_CROP },
+				keyframes: [],
 				text: null,
 			};
 			return {
@@ -769,6 +885,8 @@ export function useProjectReducer() {
 				speed: 1,
 				filter: { ...DEFAULT_FILTER },
 				transform: { ...DEFAULT_TRANSFORM },
+				crop: { ...DEFAULT_CROP },
+				keyframes: [],
 				text: null,
 			};
 
@@ -802,6 +920,37 @@ function normalizeTransform(raw: unknown): ClipTransform {
 		offsetX: typeof t.offsetX === "number" ? t.offsetX : DEFAULT_TRANSFORM.offsetX,
 		offsetY: typeof t.offsetY === "number" ? t.offsetY : DEFAULT_TRANSFORM.offsetY,
 	};
+}
+
+function normalizeCrop(raw: unknown): ClipCrop {
+	const c = (raw ?? {}) as Partial<ClipCrop>;
+	return {
+		top: clamp(typeof c.top === "number" ? c.top : DEFAULT_CROP.top, 0, 0.9),
+		right: clamp(typeof c.right === "number" ? c.right : DEFAULT_CROP.right, 0, 0.9),
+		bottom: clamp(typeof c.bottom === "number" ? c.bottom : DEFAULT_CROP.bottom, 0, 0.9),
+		left: clamp(typeof c.left === "number" ? c.left : DEFAULT_CROP.left, 0, 0.9),
+	};
+}
+
+function normalizeKeyframes(raw: unknown): Keyframe[] {
+	if (!Array.isArray(raw)) return [];
+	const list: Keyframe[] = [];
+	for (const item of raw) {
+		if (!item || typeof item !== "object") continue;
+		const k = item as Partial<Keyframe>;
+		if (typeof k.time !== "number") continue;
+		const tr = normalizeTransform(k.transform);
+		list.push({
+			id: k.id ?? uuidv4(),
+			time: Math.max(0, k.time),
+			transform: {
+				scale: clamp(tr.scale, KEYFRAME_SCALE_MIN, KEYFRAME_SCALE_MAX),
+				offsetX: clamp(tr.offsetX, -1, 1),
+				offsetY: clamp(tr.offsetY, -1, 1),
+			},
+		});
+	}
+	return list.sort((a, b) => a.time - b.time);
 }
 
 function normalizeTextStyle(raw: unknown): TextStyle | null {
@@ -858,6 +1007,8 @@ export function normalizeLoadedProject(raw: unknown): Project {
 						speed: typeof cl.speed === "number" ? cl.speed : 1,
 						filter: normalizeFilter(cl.filter),
 						transform: normalizeTransform(cl.transform),
+						crop: normalizeCrop(cl.crop),
+						keyframes: normalizeKeyframes(cl.keyframes),
 						text:
 							clipKind === "text"
 								? (normalizeTextStyle(cl.text) ?? { ...DEFAULT_TEXT_STYLE })

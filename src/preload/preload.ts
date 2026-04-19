@@ -103,6 +103,8 @@ export interface ElectronAPI {
 	saveProject: (filePath: string | null, data: string) => Promise<string | null>;
 	saveProjectAs: (data: string) => Promise<string | null>;
 	openProject: () => Promise<{ filePath: string; content: string } | null>;
+	openSrt: () => Promise<{ filePath: string; content: string } | null>;
+	saveSrt: (data: string) => Promise<string | null>;
 	onMenuUndo: (callback: () => void) => () => void;
 	onMenuRedo: (callback: () => void) => () => void;
 	onMenuNew: (callback: () => void) => () => void;
@@ -134,6 +136,8 @@ contextBridge.exposeInMainWorld("api", {
 		ipcRenderer.invoke("project:save", { filePath, data }),
 	saveProjectAs: (data: string) => ipcRenderer.invoke("project:saveAs", data),
 	openProject: () => ipcRenderer.invoke("project:open"),
+	openSrt: () => ipcRenderer.invoke("srt:open"),
+	saveSrt: (data: string) => ipcRenderer.invoke("srt:save", data),
 	onMenuUndo: (callback: () => void) => onMenu("menu:undo", callback),
 	onMenuRedo: (callback: () => void) => onMenu("menu:redo", callback),
 	onMenuNew: (callback: () => void) => onMenu("menu:new", callback),

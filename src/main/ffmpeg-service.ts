@@ -115,6 +115,7 @@ export interface ExportVideoSegment {
 	speed: number;
 	filter: { brightness: number; contrast: number; saturation: number };
 	transform: { scale: number; offsetX: number; offsetY: number };
+	crop: { top: number; right: number; bottom: number; left: number };
 }
 
 export type ExportCodec = "h264" | "h265" | "prores";
@@ -225,6 +226,14 @@ function buildVideoFilterChain(entry: ExportVideoSegment, settings: ExportSettin
 	if (entry.speed !== 1) {
 		filters.push(`setpts=PTS/${entry.speed.toFixed(4)}`);
 	}
+	const { top, right, bottom, left } = entry.crop;
+	if (top > 0 || right > 0 || bottom > 0 || left > 0) {
+		const w = Math.max(0.05, 1 - left - right);
+		const h = Math.max(0.05, 1 - top - bottom);
+		filters.push(
+			`crop=iw*${w.toFixed(4)}:ih*${h.toFixed(4)}:iw*${left.toFixed(4)}:ih*${top.toFixed(4)}`,
+		);
+	}
 	const { brightness, contrast, saturation } = entry.filter;
 	if (brightness !== 0 || contrast !== 1 || saturation !== 1) {
 		filters.push(
@@ -233,7 +242,6 @@ function buildVideoFilterChain(entry: ExportVideoSegment, settings: ExportSettin
 	}
 	const { scale, offsetX, offsetY } = entry.transform;
 	if (scale !== 1 || offsetX !== 0 || offsetY !== 0) {
-		// Scale within original canvas: scale frame by `scale`, then pad/crop back to original size with offset
 		filters.push(
 			`scale=iw*${scale.toFixed(3)}:ih*${scale.toFixed(3)},pad=iw/${scale.toFixed(3)}:ih/${scale.toFixed(3)}:(ow-iw)/2+${Math.round(offsetX * 500)}:(oh-ih)/2+${Math.round(offsetY * 500)}:color=black,crop=iw:ih`,
 		);

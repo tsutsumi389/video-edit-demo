@@ -1,13 +1,32 @@
 import type React from "react";
 import { useProject } from "../hooks/useProject";
-import type { Clip, ClipFilter, ClipTransform, TextStyle, Transition } from "../types/project";
+import {
+	type Clip,
+	type ClipCrop,
+	type ClipFilter,
+	type ClipTransform,
+	KEYFRAME_SCALE_MAX,
+	KEYFRAME_SCALE_MIN,
+	type Keyframe,
+	type KeyframeTransform,
+	type TextStyle,
+	type Transition,
+} from "../types/project";
+
+const CROP_EDGES: { key: keyof ClipCrop; label: string }[] = [
+	{ key: "top", label: "上" },
+	{ key: "bottom", label: "下" },
+	{ key: "left", label: "左" },
+	{ key: "right", label: "右" },
+];
 
 interface PropertiesPanelProps {
 	selectedClip: Clip | null;
 	transitions: Transition[];
+	currentTime: number;
 }
 
-export function PropertiesPanel({ selectedClip, transitions }: PropertiesPanelProps) {
+export function PropertiesPanel({ selectedClip, transitions, currentTime }: PropertiesPanelProps) {
 	const { dispatch } = useProject();
 
 	if (!selectedClip) {
@@ -35,6 +54,10 @@ export function PropertiesPanel({ selectedClip, transitions }: PropertiesPanelPr
 			type: "SET_CLIP_TRANSFORM",
 			payload: { clipId: clip.id, transform: partial },
 		});
+	};
+
+	const updateCrop = (partial: Partial<ClipCrop>) => {
+		dispatch({ type: "SET_CLIP_CROP", payload: { clipId: clip.id, crop: partial } });
 	};
 
 	const updateText = (partial: Partial<TextStyle>) => {
@@ -87,6 +110,31 @@ export function PropertiesPanel({ selectedClip, transitions }: PropertiesPanelPr
 					リセット
 				</button>
 			</Section>
+
+			{(isMedia || isImage) && (
+				<Section title="クロップ">
+					{CROP_EDGES.map(({ key, label }) => (
+						<Slider
+							key={key}
+							label={`${label} ${(clip.crop[key] * 100).toFixed(0)}%`}
+							min={0}
+							max={0.9}
+							step={0.01}
+							value={clip.crop[key]}
+							onChange={(v) => updateCrop({ [key]: v })}
+						/>
+					))}
+					<button
+						type="button"
+						className="property-reset"
+						onClick={() => updateCrop({ top: 0, right: 0, bottom: 0, left: 0 })}
+					>
+						リセット
+					</button>
+				</Section>
+			)}
+
+			{(isMedia || isImage || isText) && <KeyframeSection clip={clip} currentTime={currentTime} />}
 
 			{(isMedia || isImage) && (
 				<Section title="カラー調整">
@@ -261,6 +309,93 @@ function TextSection({
 				</button>
 			</label>
 		</Section>
+	);
+}
+
+function KeyframeSection({ clip, currentTime }: { clip: Clip; currentTime: number }) {
+	const { dispatch } = useProject();
+	const playDuration = (clip.outPoint - clip.inPoint) / (clip.speed || 1);
+	const localTime = Math.max(0, Math.min(playDuration, currentTime - clip.trackPosition));
+
+	const addKeyframe = () => {
+		dispatch({ type: "ADD_KEYFRAME", payload: { clipId: clip.id, time: localTime } });
+	};
+
+	const removeKeyframe = (keyframeId: string) => {
+		dispatch({ type: "REMOVE_KEYFRAME", payload: { clipId: clip.id, keyframeId } });
+	};
+
+	const updateKeyframe = (keyframeId: string, transform: Partial<KeyframeTransform>) => {
+		dispatch({ type: "UPDATE_KEYFRAME", payload: { clipId: clip.id, keyframeId, transform } });
+	};
+
+	return (
+		<Section title={`キーフレーム (${clip.keyframes.length})`}>
+			<button type="button" className="property-reset" onClick={addKeyframe}>
+				+ 再生位置にキーフレーム追加 ({localTime.toFixed(2)}s)
+			</button>
+			{clip.keyframes.length === 0 && (
+				<div className="property-hint">キーフレームなし: 静的トランスフォームで再生</div>
+			)}
+			{clip.keyframes.map((kf, idx) => (
+				<KeyframeRow
+					key={kf.id}
+					index={idx}
+					keyframe={kf}
+					onRemove={() => removeKeyframe(kf.id)}
+					onChange={(transform) => updateKeyframe(kf.id, transform)}
+				/>
+			))}
+		</Section>
+	);
+}
+
+function KeyframeRow({
+	index,
+	keyframe,
+	onRemove,
+	onChange,
+}: {
+	index: number;
+	keyframe: Keyframe;
+	onRemove: () => void;
+	onChange: (transform: Partial<KeyframeTransform>) => void;
+}) {
+	return (
+		<div className="keyframe-row">
+			<div className="keyframe-row-header">
+				<span className="keyframe-time">
+					#{index + 1} @ {keyframe.time.toFixed(2)}s
+				</span>
+				<button type="button" className="keyframe-remove" onClick={onRemove}>
+					×
+				</button>
+			</div>
+			<Slider
+				label={`スケール ${keyframe.transform.scale.toFixed(2)}x`}
+				min={KEYFRAME_SCALE_MIN}
+				max={KEYFRAME_SCALE_MAX}
+				step={0.01}
+				value={keyframe.transform.scale}
+				onChange={(v) => onChange({ scale: v })}
+			/>
+			<Slider
+				label={`X ${(keyframe.transform.offsetX * 100).toFixed(0)}%`}
+				min={-1}
+				max={1}
+				step={0.01}
+				value={keyframe.transform.offsetX}
+				onChange={(v) => onChange({ offsetX: v })}
+			/>
+			<Slider
+				label={`Y ${(keyframe.transform.offsetY * 100).toFixed(0)}%`}
+				min={-1}
+				max={1}
+				step={0.01}
+				value={keyframe.transform.offsetY}
+				onChange={(v) => onChange({ offsetY: v })}
+			/>
+		</div>
 	);
 }
 
