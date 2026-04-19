@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useProject } from "../hooks/useProject";
-import type { Marker, Track as TrackType } from "../types/project";
+import type { Marker, Track as TrackType, Transition } from "../types/project";
 import { Clip } from "./Clip";
 
 interface TrackProps {
@@ -13,6 +13,7 @@ interface TrackProps {
 	allTracks: TrackType[];
 	markers: Marker[];
 	snapThresholdPx: number;
+	transitions: Transition[];
 }
 
 export function Track({
@@ -25,6 +26,7 @@ export function Track({
 	allTracks,
 	markers,
 	snapThresholdPx,
+	transitions,
 }: TrackProps) {
 	const { dispatch } = useProject();
 	const label = track.kind === "audio" ? `A${audioIndex + 1}` : `V${videoIndex + 1}`;
@@ -100,6 +102,22 @@ export function Track({
 						snapThresholdPx={snapThresholdPx}
 					/>
 				))}
+				{transitions.map((tr) => {
+					const clipA = track.clips.find((c) => c.id === tr.clipAId);
+					const clipB = track.clips.find((c) => c.id === tr.clipBId);
+					if (!clipA || !clipB) return null;
+					const clipAEnd = clipA.trackPosition + (clipA.outPoint - clipA.inPoint);
+					const left = (clipAEnd - tr.duration) * pixelsPerSecond;
+					const width = tr.duration * 2 * pixelsPerSecond;
+					return (
+						<div
+							key={tr.id}
+							className={`transition-marker transition-${tr.kind}`}
+							style={{ left: `${left}px`, width: `${width}px` }}
+							title={`${tr.kind === "crossfade" ? "クロスフェード" : "フェード"} ${tr.duration.toFixed(2)}s`}
+						/>
+					);
+				})}
 			</div>
 		</div>
 	);

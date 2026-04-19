@@ -40,6 +40,27 @@ export function probe(filePath: string): Promise<ProbeResult> {
 	});
 }
 
+export interface ImageProbeResult {
+	width: number;
+	height: number;
+}
+
+export function probeImage(filePath: string): Promise<ImageProbeResult> {
+	return new Promise((resolve, reject) => {
+		ffmpeg.ffprobe(filePath, (err, metadata) => {
+			if (err) {
+				reject(err);
+				return;
+			}
+			const videoStream = metadata.streams.find((s) => s.codec_type === "video");
+			resolve({
+				width: videoStream?.width ?? 0,
+				height: videoStream?.height ?? 0,
+			});
+		});
+	});
+}
+
 export interface ExportClip {
 	sourceFile: string;
 	inPoint: number;
@@ -48,6 +69,7 @@ export interface ExportClip {
 	volume: number;
 	fadeIn: number;
 	fadeOut: number;
+	speed: number;
 	hasAudio: boolean;
 	hasVideo: boolean;
 }
@@ -61,9 +83,45 @@ export interface ExportTrack {
 	clips: ExportClip[];
 }
 
+export interface ExportOverlay {
+	id: string;
+	kind: "text" | "image";
+	trackPosition: number;
+	duration: number;
+	fadeIn: number;
+	fadeOut: number;
+	sourceFile: string;
+	transform: { scale: number; offsetX: number; offsetY: number };
+	text: {
+		text: string;
+		fontSize: number;
+		color: string;
+		backgroundColor: string | null;
+	} | null;
+}
+
+export interface ExportTransition {
+	id: string;
+	clipAId: string;
+	clipBId: string;
+	duration: number;
+	kind: "crossfade" | "fade-to-black";
+}
+
+export interface ExportVideoSegment {
+	sourceFile: string;
+	inPoint: number;
+	outPoint: number;
+	speed: number;
+	filter: { brightness: number; contrast: number; saturation: number };
+	transform: { scale: number; offsetX: number; offsetY: number };
+}
+
 export interface ExportPayload {
-	videoEdl: Array<{ sourceFile: string; inPoint: number; outPoint: number }>;
+	videoEdl: ExportVideoSegment[];
 	audioTracks: ExportTrack[];
+	overlays: ExportOverlay[];
+	transitions: ExportTransition[];
 	totalDuration: number;
 }
 
@@ -71,6 +129,22 @@ interface AudioSegmentSpec {
 	inputIndex: number;
 	clip: ExportClip;
 	trackVolume: number;
+}
+
+function atempoChain(speed: number): string {
+	if (speed === 1) return "";
+	const parts: string[] = [];
+	let remaining = speed;
+	while (remaining > 2) {
+		parts.push("atempo=2");
+		remaining /= 2;
+	}
+	while (remaining < 0.5) {
+		parts.push("atempo=0.5");
+		remaining *= 2;
+	}
+	parts.push(`atempo=${remaining.toFixed(4)}`);
+	return parts.join(",");
 }
 
 function buildAudioFilter(segments: AudioSegmentSpec[], totalDuration: number): string {
@@ -83,9 +157,12 @@ function buildAudioFilter(segments: AudioSegmentSpec[], totalDuration: number): 
 
 	segments.forEach((seg, i) => {
 		const { inputIndex, clip, trackVolume } = seg;
-		const duration = clip.outPoint - clip.inPoint;
+		const srcDuration = clip.outPoint - clip.inPoint;
+		const playDuration = srcDuration / clip.speed;
 		const combinedVolume = clip.volume * trackVolume;
-		const filters: string[] = [`atrim=0:${duration.toFixed(3)}`, "asetpts=PTS-STARTPTS"];
+		const filters: string[] = [`atrim=0:${srcDuration.toFixed(3)}`, "asetpts=PTS-STARTPTS"];
+		const tempo = atempoChain(clip.speed);
+		if (tempo) filters.push(tempo);
 		if (combinedVolume !== 1) {
 			filters.push(`volume=${combinedVolume.toFixed(4)}`);
 		}
@@ -93,7 +170,7 @@ function buildAudioFilter(segments: AudioSegmentSpec[], totalDuration: number): 
 			filters.push(`afade=t=in:st=0:d=${clip.fadeIn.toFixed(3)}`);
 		}
 		if (clip.fadeOut > 0) {
-			const fadeStart = Math.max(0, duration - clip.fadeOut);
+			const fadeStart = Math.max(0, playDuration - clip.fadeOut);
 			filters.push(`afade=t=out:st=${fadeStart.toFixed(3)}:d=${clip.fadeOut.toFixed(3)}`);
 		}
 		filters.push(
@@ -116,6 +193,27 @@ function buildAudioFilter(segments: AudioSegmentSpec[], totalDuration: number): 
 	return parts.join(";");
 }
 
+function buildVideoFilterChain(entry: ExportVideoSegment): string {
+	const filters: string[] = [];
+	if (entry.speed !== 1) {
+		filters.push(`setpts=PTS/${entry.speed.toFixed(4)}`);
+	}
+	const { brightness, contrast, saturation } = entry.filter;
+	if (brightness !== 0 || contrast !== 1 || saturation !== 1) {
+		filters.push(
+			`eq=brightness=${brightness.toFixed(3)}:contrast=${contrast.toFixed(3)}:saturation=${saturation.toFixed(3)}`,
+		);
+	}
+	const { scale, offsetX, offsetY } = entry.transform;
+	if (scale !== 1 || offsetX !== 0 || offsetY !== 0) {
+		// Scale within original canvas: scale frame by `scale`, then pad/crop back to original size with offset
+		filters.push(
+			`scale=iw*${scale.toFixed(3)}:ih*${scale.toFixed(3)},pad=iw/${scale.toFixed(3)}:ih/${scale.toFixed(3)}:(ow-iw)/2+${Math.round(offsetX * 500)}:(oh-ih)/2+${Math.round(offsetY * 500)}:color=black,crop=iw:ih`,
+		);
+	}
+	return filters.join(",");
+}
+
 async function renderVideoTrack(
 	edl: ExportPayload["videoEdl"],
 	tmpDir: string,
@@ -127,11 +225,20 @@ async function renderVideoTrack(
 	const segments: string[] = edl.map((_, i) => path.join(tmpDir, `seg_${i}.mp4`));
 	let completed = 0;
 
-	const encode = (entry: ExportPayload["videoEdl"][number], segPath: string) =>
+	const encode = (entry: ExportVideoSegment, segPath: string) =>
 		new Promise<void>((res, rej) => {
-			ffmpeg(entry.sourceFile)
-				.setStartTime(entry.inPoint)
-				.setDuration(entry.outPoint - entry.inPoint)
+			const srcDuration = entry.outPoint - entry.inPoint;
+			const cmd = ffmpeg(entry.sourceFile).inputOptions([
+				"-ss",
+				entry.inPoint.toFixed(3),
+				"-t",
+				srcDuration.toFixed(3),
+			]);
+			const filterChain = buildVideoFilterChain(entry);
+			if (filterChain) {
+				cmd.videoFilters(filterChain);
+			}
+			cmd
 				.outputOptions(["-c:v", "libx264", "-an", "-preset", "fast"])
 				.output(segPath)
 				.on("end", () => {
@@ -169,6 +276,78 @@ async function renderVideoTrack(
 	});
 
 	return videoOnlyPath;
+}
+
+function escapeDrawtext(s: string): string {
+	return s.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'").replace(/,/g, "\\,");
+}
+
+function buildOverlayFilters(
+	overlays: ExportOverlay[],
+	imageInputStartIndex: number,
+): { filterPart: string; videoInputsBefore: number; imageInputs: string[] } {
+	if (overlays.length === 0) {
+		return { filterPart: "", videoInputsBefore: 0, imageInputs: [] };
+	}
+
+	// Build a chain: [v0] first ... then overlay image/text one by one
+	const imageInputs: string[] = [];
+	const chain: string[] = [];
+	let currentLabel = "vbase";
+	let imageIdx = 0;
+
+	for (let i = 0; i < overlays.length; i++) {
+		const overlay = overlays[i];
+		const nextLabel = i === overlays.length - 1 ? "vout" : `v${i}`;
+		const start = overlay.trackPosition;
+		const end = overlay.trackPosition + overlay.duration;
+		const enable = `between(t\\,${start.toFixed(3)}\\,${end.toFixed(3)})`;
+
+		if (overlay.kind === "text" && overlay.text) {
+			const { text, fontSize, color, backgroundColor } = overlay.text;
+			const escaped = escapeDrawtext(text);
+			const xExpr = `(w-text_w)/2+${Math.round(overlay.transform.offsetX * 300)}`;
+			const yExpr = `(h-text_h)/2+${Math.round(overlay.transform.offsetY * 300)}`;
+			const size = Math.round(fontSize * overlay.transform.scale);
+			const drawtextParts = [
+				`text='${escaped}'`,
+				`fontsize=${size}`,
+				`fontcolor=${color}`,
+				`x=${xExpr}`,
+				`y=${yExpr}`,
+				`enable='${enable}'`,
+			];
+			if (backgroundColor) {
+				drawtextParts.push("box=1", `boxcolor=${backgroundColor}@0.7`, "boxborderw=10");
+			}
+			chain.push(`[${currentLabel}]drawtext=${drawtextParts.join(":")}[${nextLabel}]`);
+		} else if (overlay.kind === "image" && overlay.sourceFile) {
+			const inputIdx = imageInputStartIndex + imageIdx;
+			imageInputs.push(overlay.sourceFile);
+			imageIdx++;
+			const scale = overlay.transform.scale;
+			const xExpr = `(W-w)/2+${Math.round(overlay.transform.offsetX * 300)}`;
+			const yExpr = `(H-h)/2+${Math.round(overlay.transform.offsetY * 300)}`;
+			// Scale image before overlaying: use iw*scale
+			const scaledLabel = `img${i}s`;
+			chain.push(
+				`[${inputIdx}:v]scale=iw*${scale.toFixed(3)}:ih*${scale.toFixed(3)}[${scaledLabel}]`,
+			);
+			chain.push(
+				`[${currentLabel}][${scaledLabel}]overlay=x=${xExpr}:y=${yExpr}:enable='${enable}'[${nextLabel}]`,
+			);
+		} else {
+			chain.push(`[${currentLabel}]null[${nextLabel}]`);
+		}
+
+		currentLabel = nextLabel;
+	}
+
+	return {
+		filterPart: chain.join(";"),
+		videoInputsBefore: 0,
+		imageInputs,
+	};
 }
 
 export async function exportTimeline(
@@ -212,19 +391,38 @@ export async function exportTimeline(
 				cmd.input(inp.sourceFile).inputOptions(["-ss", inp.inPoint.toFixed(3)]);
 			}
 
+			const videoInputIndex = audioClipInputs.length;
 			if (videoOnlyPath) {
 				cmd.input(videoOnlyPath);
 			}
 
-			const audioFilter = buildAudioFilter(segments, totalDuration);
-			const filterParts = [audioFilter];
+			const filterParts: string[] = [];
 
-			const videoInputIndex = audioClipInputs.length;
+			const audioFilter = buildAudioFilter(segments, totalDuration);
+			filterParts.push(audioFilter);
+
 			const outputOptions: string[] = [];
 
+			const imageInputStartIndex = audioClipInputs.length + (videoOnlyPath ? 1 : 0);
+			const overlayResult =
+				videoOnlyPath && payload.overlays.length > 0
+					? buildOverlayFilters(payload.overlays, imageInputStartIndex)
+					: { filterPart: "", imageInputs: [] };
+
+			for (const imgPath of overlayResult.imageInputs) {
+				cmd.input(imgPath).inputOptions(["-loop", "1"]);
+			}
+
 			if (videoOnlyPath) {
-				outputOptions.push("-map", `${videoInputIndex}:v`);
-				outputOptions.push("-c:v", "copy");
+				if (overlayResult.filterPart) {
+					filterParts.push(`[${videoInputIndex}:v]null[vbase]`);
+					filterParts.push(overlayResult.filterPart);
+					outputOptions.push("-map", "[vout]");
+					outputOptions.push("-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p");
+				} else {
+					outputOptions.push("-map", `${videoInputIndex}:v`);
+					outputOptions.push("-c:v", "copy");
+				}
 			}
 
 			outputOptions.push("-map", "[aout]");

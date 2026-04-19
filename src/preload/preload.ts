@@ -18,6 +18,7 @@ export interface ExportClipIPC {
 	volume: number;
 	fadeIn: number;
 	fadeOut: number;
+	speed: number;
 	hasAudio: boolean;
 	hasVideo: boolean;
 }
@@ -31,10 +32,44 @@ export interface ExportTrackIPC {
 	clips: ExportClipIPC[];
 }
 
+export interface ExportOverlayIPC {
+	id: string;
+	kind: "text" | "image";
+	trackPosition: number;
+	duration: number;
+	fadeIn: number;
+	fadeOut: number;
+	sourceFile: string;
+	transform: { scale: number; offsetX: number; offsetY: number };
+	text: {
+		text: string;
+		fontSize: number;
+		color: string;
+		backgroundColor: string | null;
+	} | null;
+}
+
+export interface ExportTransitionIPC {
+	id: string;
+	clipAId: string;
+	clipBId: string;
+	duration: number;
+	kind: "crossfade" | "fade-to-black";
+}
+
 export interface ExportPayloadIPC {
 	videoEdl: Array<{ sourceFile: string; inPoint: number; outPoint: number }>;
 	audioTracks: ExportTrackIPC[];
+	overlays: ExportOverlayIPC[];
+	transitions: ExportTransitionIPC[];
 	totalDuration: number;
+}
+
+export interface ImageImportResult {
+	filePath: string;
+	fileName: string;
+	width: number;
+	height: number;
 }
 
 export interface WaveformIPCResult {
@@ -45,6 +80,7 @@ export interface WaveformIPCResult {
 
 export interface ElectronAPI {
 	importFile: () => Promise<MediaImportResult | null>;
+	importImage: () => Promise<ImageImportResult | null>;
 	exportProject: (payload: ExportPayloadIPC) => Promise<string | null>;
 	onExportProgress: (callback: (progress: number) => void) => () => void;
 	getMediaUrl: (filePath: string) => string;
@@ -70,6 +106,7 @@ function onMenu(channel: string, callback: () => void) {
 
 contextBridge.exposeInMainWorld("api", {
 	importFile: () => ipcRenderer.invoke("file:import"),
+	importImage: () => ipcRenderer.invoke("file:importImage"),
 	exportProject: (payload: ExportPayloadIPC) => ipcRenderer.invoke("file:export", payload),
 	onExportProgress: (callback: (progress: number) => void) => {
 		const handler = (_event: Electron.IpcRendererEvent, progress: number) => callback(progress);

@@ -34,6 +34,23 @@ export function Timeline({
 
 	const tracks = state.current.tracks;
 	const markers = state.current.markers;
+	const transitions = state.current.transitions;
+
+	const transitionsByTrackId = useMemo(() => {
+		const clipTrackId = new Map<string, string>();
+		for (const t of tracks) {
+			for (const c of t.clips) clipTrackId.set(c.id, t.id);
+		}
+		const map = new Map<string, typeof transitions>();
+		for (const tr of transitions) {
+			const tid = clipTrackId.get(tr.clipAId);
+			if (!tid || tid !== clipTrackId.get(tr.clipBId)) continue;
+			const list = map.get(tid);
+			if (list) list.push(tr);
+			else map.set(tid, [tr]);
+		}
+		return map;
+	}, [tracks, transitions]);
 
 	useEffect(() => {
 		const maxEnd = tracks.reduce((max, track) => {
@@ -399,6 +416,7 @@ export function Timeline({
 										allTracks={tracks}
 										markers={markers}
 										snapThresholdPx={SNAP_THRESHOLD_PX}
+										transitions={transitionsByTrackId.get(track.id) ?? []}
 									/>
 								);
 							});

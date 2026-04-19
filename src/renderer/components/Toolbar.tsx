@@ -13,6 +13,8 @@ interface ToolbarProps {
 	onSaveAs: () => void;
 	onOpen: () => void;
 	onNew: () => void;
+	onAddText: () => void;
+	onAddImage: () => void;
 	projectFilePath: string | null;
 	exportProgress: number | null;
 }
@@ -28,6 +30,8 @@ export function Toolbar({
 	onSaveAs,
 	onOpen,
 	onNew,
+	onAddText,
+	onAddImage,
 	projectFilePath,
 	exportProgress,
 }: ToolbarProps) {
@@ -67,7 +71,7 @@ export function Toolbar({
 	};
 
 	const projectLabel = projectFilePath
-		? (projectFilePath.split("/").pop() ?? projectFilePath)
+		? (projectFilePath.split(/[/\\]/).pop() ?? projectFilePath)
 		: "未保存";
 
 	return (
@@ -201,6 +205,22 @@ export function Toolbar({
 					title="やり直す (Cmd/Ctrl+Shift+Z)"
 				>
 					やり直す
+				</button>
+				<button
+					type="button"
+					className="toolbar-btn"
+					onClick={onAddText}
+					title="テキストクリップを追加"
+				>
+					テキスト
+				</button>
+				<button
+					type="button"
+					className="toolbar-btn"
+					onClick={onAddImage}
+					title="画像クリップを追加"
+				>
+					画像
 				</button>
 				<span className="time-display">
 					{formatTime(currentTime)} / {formatTime(totalDuration)}
