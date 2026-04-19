@@ -59,9 +59,11 @@ export function registerIpcHandlers(): void {
 	});
 
 	ipcMain.handle("file:export", async (event, payload: ExportPayload) => {
+		const container = payload.settings.container;
+		const filterName = container === "mov" ? "QuickTime Movie" : "MP4 Video";
 		const result = await dialog.showSaveDialog({
-			defaultPath: "output.mp4",
-			filters: [{ name: "MP4 Video", extensions: ["mp4"] }],
+			defaultPath: `output.${container}`,
+			filters: [{ name: filterName, extensions: [container] }],
 		});
 
 		if (result.canceled || !result.filePath) {

@@ -921,3 +921,165 @@ body {
 		transform: translateY(0);
 	}
 }
+
+/* Modal dialog */
+.modal-backdrop {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.6);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 1000;
+}
+
+.modal-panel {
+	background: #1a1a2e;
+	color: #e0e0e0;
+	border-radius: 8px;
+	padding: 24px;
+	min-width: 480px;
+	max-width: 640px;
+	max-height: 90vh;
+	overflow-y: auto;
+	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+	border: 1px solid #2a2a4e;
+}
+
+.modal-title {
+	margin: 0 0 16px;
+	font-size: 18px;
+	font-weight: 600;
+	color: #e94560;
+}
+
+.modal-section {
+	margin-bottom: 16px;
+}
+
+.modal-label {
+	display: block;
+	font-size: 12px;
+	color: #a0a0a0;
+	margin-bottom: 4px;
+}
+
+.modal-input {
+	width: 100%;
+	padding: 6px 8px;
+	background: #0f0f23;
+	border: 1px solid #2a2a4e;
+	border-radius: 4px;
+	color: #e0e0e0;
+	font-size: 13px;
+}
+
+.modal-input:focus {
+	outline: none;
+	border-color: #e94560;
+}
+
+.modal-input:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.modal-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr 1fr;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.modal-grid-2 {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 12px;
+	margin-top: 8px;
+}
+
+.modal-checkbox {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.modal-hint {
+	font-size: 12px;
+	color: #808080;
+	grid-column: 1 / -1;
+	margin-top: 4px;
+}
+
+.modal-error {
+	font-size: 12px;
+	color: #e94560;
+	margin-top: 6px;
+}
+
+.modal-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 16px;
+}
+
+.modal-btn {
+	padding: 8px 16px;
+	background: #2a2a4e;
+	border: none;
+	border-radius: 4px;
+	color: #e0e0e0;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.modal-btn:hover:not(:disabled) {
+	background: #3a3a5e;
+}
+
+.modal-btn:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+.modal-btn-primary {
+	background: #e94560;
+}
+
+.modal-btn-primary:hover:not(:disabled) {
+	background: #f95570;
+}
+
+.modal-progress-bar {
+	width: 100%;
+	height: 12px;
+	background: #0f0f23;
+	border-radius: 6px;
+	overflow: hidden;
+	margin: 12px 0 8px;
+}
+
+.modal-progress-fill {
+	height: 100%;
+	background: linear-gradient(90deg, #e94560, #f95570);
+	transition: width 0.2s;
+}
+
+.modal-progress-text {
+	font-size: 20px;
+	font-weight: 600;
+	text-align: center;
+	font-family: "SF Mono", "Fira Code", monospace;
+}
+
+.export-dialog {
+	width: 560px;
+}
+
+.export-progress {
+	width: 400px;
+	text-align: center;
+}

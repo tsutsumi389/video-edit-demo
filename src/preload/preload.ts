@@ -57,12 +57,27 @@ export interface ExportTransitionIPC {
 	kind: "crossfade" | "fade-to-black";
 }
 
+export type ExportCodecIPC = "h264" | "h265" | "prores";
+export type ExportContainerIPC = "mp4" | "mov";
+
+export interface ExportSettingsIPC {
+	presetId: string;
+	width: number;
+	height: number;
+	fps: number;
+	videoBitrate: number;
+	audioBitrate: number;
+	codec: ExportCodecIPC;
+	container: ExportContainerIPC;
+}
+
 export interface ExportPayloadIPC {
 	videoEdl: Array<{ sourceFile: string; inPoint: number; outPoint: number }>;
 	audioTracks: ExportTrackIPC[];
 	overlays: ExportOverlayIPC[];
 	transitions: ExportTransitionIPC[];
 	totalDuration: number;
+	settings: ExportSettingsIPC;
 }
 
 export interface ImageImportResult {
