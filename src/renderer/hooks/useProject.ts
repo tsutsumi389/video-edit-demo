@@ -7,15 +7,18 @@ interface ProjectState {
 	undoStack: Project[];
 	redoStack: Project[];
 	selectedClipId: string | null;
+	clipboard: Clip | null;
 }
 
 const initialState: ProjectState = {
 	current: {
 		tracks: [{ id: "track-1", clips: [] }],
+		markers: [],
 	},
 	undoStack: [],
 	redoStack: [],
 	selectedClipId: null,
+	clipboard: null,
 };
 
 export function findClipTrack(
@@ -55,9 +58,27 @@ function clampToTrackBounds(
 	return Math.min(Math.max(0, requested, leftBound), rightBound);
 }
 
+function rippleShift(clips: Clip[], fromPos: number, delta: number, excludeId?: string): Clip[] {
+	return clips.map((c) =>
+		c.id !== excludeId && c.trackPosition >= fromPos
+			? { ...c, trackPosition: Math.max(0, c.trackPosition + delta) }
+			: c,
+	);
+}
+
+function sortMarkersByTime<T extends { time: number }>(markers: T[]): T[] {
+	return [...markers].sort((a, b) => a.time - b.time);
+}
+
 function projectReducer(state: ProjectState, action: ProjectAction): ProjectState {
 	if (action.type === "SELECT_CLIP") {
 		return { ...state, selectedClipId: action.payload.clipId };
+	}
+
+	if (action.type === "COPY_CLIP") {
+		const found = findClipTrack(state.current.tracks, action.payload.clipId);
+		if (!found) return state;
+		return { ...state, clipboard: found.clip };
 	}
 
 	if (action.type === "UNDO") {
@@ -116,6 +137,29 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 					tracks: updateTrackById(withUndo.current.tracks, found.track.id, (t) => ({
 						...t,
 						clips: t.clips.filter((c) => c.id !== clipId),
+					})),
+				},
+				selectedClipId: state.selectedClipId === clipId ? null : state.selectedClipId,
+			};
+		}
+
+		case "RIPPLE_DELETE_CLIP": {
+			const { clipId } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found) return state;
+			const removedDuration = found.clip.outPoint - found.clip.inPoint;
+			const removedStart = found.clip.trackPosition;
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					tracks: updateTrackById(withUndo.current.tracks, found.track.id, (t) => ({
+						...t,
+						clips: rippleShift(
+							t.clips.filter((c) => c.id !== clipId),
+							removedStart,
+							-removedDuration,
+						),
 					})),
 				},
 				selectedClipId: state.selectedClipId === clipId ? null : state.selectedClipId,
@@ -228,6 +272,57 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 			};
 		}
 
+		case "PASTE_CLIP": {
+			if (!state.clipboard) return state;
+			const { trackId, trackPosition, ripple } = action.payload;
+			const targetTrack = withUndo.current.tracks.find((t) => t.id === trackId);
+			if (!targetTrack) return state;
+			const pastedDuration = state.clipboard.outPoint - state.clipboard.inPoint;
+			const newClipId = uuidv4();
+			const requested = Math.max(0, trackPosition);
+			// Non-ripple pastes are clamped against existing neighbors so the new clip does not overlap.
+			const finalPos = ripple
+				? requested
+				: clampToTrackBounds(targetTrack.clips, newClipId, pastedDuration, requested);
+			const newClip: Clip = {
+				...state.clipboard,
+				id: newClipId,
+				trackPosition: finalPos,
+			};
+
+			const newTracks = updateTrackById(withUndo.current.tracks, trackId, (t) => {
+				const base = ripple ? rippleShift(t.clips, finalPos, pastedDuration) : t.clips;
+				return { ...t, clips: [...base, newClip] };
+			});
+
+			return {
+				...withUndo,
+				current: { ...withUndo.current, tracks: newTracks },
+				selectedClipId: newClipId,
+			};
+		}
+
+		case "DUPLICATE_CLIP": {
+			const { clipId } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found) return state;
+			const dupDuration = found.clip.outPoint - found.clip.inPoint;
+			const insertAt = found.clip.trackPosition + dupDuration;
+			const newClipId = uuidv4();
+			const newClip: Clip = { ...found.clip, id: newClipId, trackPosition: insertAt };
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					tracks: updateTrackById(withUndo.current.tracks, found.track.id, (t) => ({
+						...t,
+						clips: [...rippleShift(t.clips, insertAt, dupDuration, clipId), newClip],
+					})),
+				},
+				selectedClipId: newClipId,
+			};
+		}
+
 		case "ADD_TRACK": {
 			return {
 				...withUndo,
@@ -256,12 +351,55 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 			};
 		}
 
+		case "ADD_MARKER": {
+			const { time, label } = action.payload;
+			const existing = withUndo.current.markers;
+			const index = existing.length + 1;
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					markers: sortMarkersByTime([
+						...existing,
+						{ id: uuidv4(), time, label: label ?? `M${index}` },
+					]),
+				},
+			};
+		}
+
+		case "REMOVE_MARKER": {
+			const { markerId } = action.payload;
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					markers: withUndo.current.markers.filter((m) => m.id !== markerId),
+				},
+			};
+		}
+
+		case "UPDATE_MARKER": {
+			const { markerId, label, time } = action.payload;
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					markers: sortMarkersByTime(
+						withUndo.current.markers.map((m) =>
+							m.id === markerId ? { ...m, label: label ?? m.label, time: time ?? m.time } : m,
+						),
+					),
+				},
+			};
+		}
+
 		case "LOAD_PROJECT": {
 			return {
 				current: action.payload.project,
 				undoStack: [],
 				redoStack: [],
 				selectedClipId: null,
+				clipboard: null,
 			};
 		}
 

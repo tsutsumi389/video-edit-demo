@@ -1,7 +1,8 @@
 import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useProject } from "../hooks/useProject";
-import type { Clip as ClipType } from "../types/project";
+import type { Clip as ClipType, Marker, ProjectAction, Track as TrackType } from "../types/project";
+import { clamp } from "../utils/time";
 
 interface ClipProps {
 	clip: ClipType;
@@ -9,9 +10,34 @@ interface ClipProps {
 	pixelsPerSecond: number;
 	isSelected: boolean;
 	currentTime: number;
+	allTracks: TrackType[];
+	markers: Marker[];
+	snapThresholdPx: number;
 }
 
-export function Clip({ clip, trackId, pixelsPerSecond, isSelected, currentTime }: ClipProps) {
+function snapToCandidates(value: number, candidates: number[], thresholdSec: number): number {
+	let best = value;
+	let bestDist = thresholdSec;
+	for (const c of candidates) {
+		const d = Math.abs(c - value);
+		if (d < bestDist) {
+			bestDist = d;
+			best = c;
+		}
+	}
+	return best;
+}
+
+export function Clip({
+	clip,
+	trackId,
+	pixelsPerSecond,
+	isSelected,
+	currentTime,
+	allTracks,
+	markers,
+	snapThresholdPx,
+}: ClipProps) {
 	const { dispatch } = useProject();
 	const dragRef = useRef<{
 		startX: number;
@@ -23,6 +49,7 @@ export function Clip({ clip, trackId, pixelsPerSecond, isSelected, currentTime }
 	const clipDuration = clip.outPoint - clip.inPoint;
 	const width = clipDuration * pixelsPerSecond;
 	const left = clip.trackPosition * pixelsPerSecond;
+	const thresholdSec = snapThresholdPx / pixelsPerSecond;
 
 	const handleSelect = useCallback(
 		(e: React.MouseEvent) => {
@@ -40,6 +67,21 @@ export function Clip({ clip, trackId, pixelsPerSecond, isSelected, currentTime }
 
 			dragRef.current = { startX: e.clientX, startPos: clip.trackPosition, mode };
 			const trackElements = document.querySelectorAll("[data-track-id]");
+			// Snap candidates are frozen at drag-start so mid-drag edits in other tracks do not shift them.
+			const snapCandidates = (() => {
+				const set = new Set<number>([currentTime, 0]);
+				for (const t of allTracks) {
+					for (const c of t.clips) {
+						if (c.id === clip.id) continue;
+						set.add(c.trackPosition);
+						set.add(c.trackPosition + (c.outPoint - c.inPoint));
+					}
+				}
+				for (const m of markers) set.add(m.time);
+				const base = Math.floor(clip.trackPosition);
+				for (let i = -5; i <= 20; i++) set.add(base + i);
+				return [...set].filter((n) => n >= 0);
+			})();
 
 			const handleMouseMove = (ev: MouseEvent) => {
 				if (!dragRef.current) return;
@@ -56,16 +98,27 @@ export function Clip({ clip, trackId, pixelsPerSecond, isSelected, currentTime }
 						}
 					}
 
+					const rawPos = dragRef.current.startPos + dtSeconds;
+					const rawEnd = rawPos + clipDuration;
+					const snappedStart = snapToCandidates(rawPos, snapCandidates, thresholdSec);
+					const snappedEnd = snapToCandidates(rawEnd, snapCandidates, thresholdSec);
+					const startDist = Math.abs(snappedStart - rawPos);
+					const endDist = Math.abs(snappedEnd - rawEnd);
+					const finalPos = startDist <= endDist ? snappedStart : snappedEnd - clipDuration;
+
 					dispatch({
 						type: "MOVE_CLIP",
 						payload: {
 							clipId: clip.id,
-							trackPosition: dragRef.current.startPos + dtSeconds,
+							trackPosition: finalPos,
 							trackId: targetTrackId,
 						},
 					});
 				} else if (dragRef.current.mode === "trim-left") {
-					const newIn = Math.max(0, clip.inPoint + dtSeconds);
+					const rawStartOnTimeline = clip.trackPosition + dtSeconds;
+					const snappedStart = snapToCandidates(rawStartOnTimeline, snapCandidates, thresholdSec);
+					const adjustedDt = snappedStart - clip.trackPosition;
+					const newIn = clamp(clip.inPoint + adjustedDt, 0, clip.outPoint - 0.1);
 					if (newIn < clip.outPoint - 0.1) {
 						dispatch({
 							type: "TRIM_CLIP",
@@ -73,7 +126,10 @@ export function Clip({ clip, trackId, pixelsPerSecond, isSelected, currentTime }
 						});
 					}
 				} else if (dragRef.current.mode === "trim-right") {
-					const newOut = Math.min(clip.duration, clip.outPoint + dtSeconds);
+					const rawEndOnTimeline = clip.trackPosition + clipDuration + dtSeconds;
+					const snappedEnd = snapToCandidates(rawEndOnTimeline, snapCandidates, thresholdSec);
+					const adjustedDt = snappedEnd - (clip.trackPosition + clipDuration);
+					const newOut = clamp(clip.outPoint + adjustedDt, clip.inPoint + 0.1, clip.duration);
 					if (newOut > clip.inPoint + 0.1) {
 						dispatch({
 							type: "TRIM_CLIP",
@@ -92,7 +148,17 @@ export function Clip({ clip, trackId, pixelsPerSecond, isSelected, currentTime }
 			window.addEventListener("mousemove", handleMouseMove);
 			window.addEventListener("mouseup", handleMouseUp);
 		},
-		[clip, trackId, pixelsPerSecond, dispatch],
+		[
+			clip,
+			trackId,
+			pixelsPerSecond,
+			dispatch,
+			allTracks,
+			markers,
+			currentTime,
+			clipDuration,
+			thresholdSec,
+		],
 	);
 
 	const handleContextMenu = useCallback(
@@ -120,16 +186,10 @@ export function Clip({ clip, trackId, pixelsPerSecond, isSelected, currentTime }
 	}, [contextMenu]);
 
 	const canSplitAtPlayhead =
-		currentTime > clip.trackPosition &&
-		currentTime < clip.trackPosition + (clip.outPoint - clip.inPoint);
+		currentTime > clip.trackPosition && currentTime < clip.trackPosition + clipDuration;
 
-	const handleSplitFromMenu = () => {
-		dispatch({ type: "SPLIT_CLIP", payload: { clipId: clip.id, splitTime: currentTime } });
-		setContextMenu(null);
-	};
-
-	const handleDeleteFromMenu = () => {
-		dispatch({ type: "REMOVE_CLIP", payload: { clipId: clip.id } });
+	const runMenuAction = (action: ProjectAction) => {
+		dispatch(action);
 		setContextMenu(null);
 	};
 
@@ -160,13 +220,45 @@ export function Clip({ clip, trackId, pixelsPerSecond, isSelected, currentTime }
 					<button
 						type="button"
 						className="menu-dropdown-item"
-						onClick={handleSplitFromMenu}
+						onClick={() =>
+							runMenuAction({
+								type: "SPLIT_CLIP",
+								payload: { clipId: clip.id, splitTime: currentTime },
+							})
+						}
 						disabled={!canSplitAtPlayhead}
 					>
 						再生位置で分割
 					</button>
-					<button type="button" className="menu-dropdown-item" onClick={handleDeleteFromMenu}>
+					<button
+						type="button"
+						className="menu-dropdown-item"
+						onClick={() => runMenuAction({ type: "COPY_CLIP", payload: { clipId: clip.id } })}
+					>
+						コピー (Ctrl+C)
+					</button>
+					<button
+						type="button"
+						className="menu-dropdown-item"
+						onClick={() => runMenuAction({ type: "DUPLICATE_CLIP", payload: { clipId: clip.id } })}
+					>
+						複製 (Ctrl+D)
+					</button>
+					<button
+						type="button"
+						className="menu-dropdown-item"
+						onClick={() => runMenuAction({ type: "REMOVE_CLIP", payload: { clipId: clip.id } })}
+					>
 						削除
+					</button>
+					<button
+						type="button"
+						className="menu-dropdown-item"
+						onClick={() =>
+							runMenuAction({ type: "RIPPLE_DELETE_CLIP", payload: { clipId: clip.id } })
+						}
+					>
+						リップル削除 (Shift+Del)
 					</button>
 				</div>
 			)}
