@@ -1,12 +1,20 @@
 import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useProject } from "../hooks/useProject";
-import type { Clip as ClipType, Marker, ProjectAction, Track as TrackType } from "../types/project";
+import type {
+	Clip as ClipType,
+	Marker,
+	ProjectAction,
+	TrackKind,
+	Track as TrackType,
+} from "../types/project";
 import { clamp } from "../utils/time";
+import { Waveform } from "./Waveform";
 
 interface ClipProps {
 	clip: ClipType;
 	trackId: string;
+	trackKind: TrackKind;
 	pixelsPerSecond: number;
 	isSelected: boolean;
 	currentTime: number;
@@ -14,6 +22,8 @@ interface ClipProps {
 	markers: Marker[];
 	snapThresholdPx: number;
 }
+
+type DragMode = "move" | "trim-left" | "trim-right" | "fade-in" | "fade-out";
 
 function snapToCandidates(value: number, candidates: number[], thresholdSec: number): number {
 	let best = value;
@@ -31,6 +41,7 @@ function snapToCandidates(value: number, candidates: number[], thresholdSec: num
 export function Clip({
 	clip,
 	trackId,
+	trackKind,
 	pixelsPerSecond,
 	isSelected,
 	currentTime,
@@ -42,7 +53,9 @@ export function Clip({
 	const dragRef = useRef<{
 		startX: number;
 		startPos: number;
-		mode: "move" | "trim-left" | "trim-right";
+		startFadeIn: number;
+		startFadeOut: number;
+		mode: DragMode;
 	} | null>(null);
 	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
@@ -60,14 +73,19 @@ export function Clip({
 	);
 
 	const handleMouseDown = useCallback(
-		(e: React.MouseEvent, mode: "move" | "trim-left" | "trim-right") => {
+		(e: React.MouseEvent, mode: DragMode) => {
 			e.preventDefault();
 			e.stopPropagation();
 			dispatch({ type: "SELECT_CLIP", payload: { clipId: clip.id } });
 
-			dragRef.current = { startX: e.clientX, startPos: clip.trackPosition, mode };
+			dragRef.current = {
+				startX: e.clientX,
+				startPos: clip.trackPosition,
+				startFadeIn: clip.fadeIn,
+				startFadeOut: clip.fadeOut,
+				mode,
+			};
 			const trackElements = document.querySelectorAll("[data-track-id]");
-			// Snap candidates are frozen at drag-start so mid-drag edits in other tracks do not shift them.
 			const snapCandidates = (() => {
 				const set = new Set<number>([currentTime, 0]);
 				for (const t of allTracks) {
@@ -136,6 +154,12 @@ export function Clip({
 							payload: { clipId: clip.id, outPoint: newOut },
 						});
 					}
+				} else if (dragRef.current.mode === "fade-in") {
+					const newFade = clamp(dragRef.current.startFadeIn + dtSeconds, 0, clipDuration);
+					dispatch({ type: "SET_CLIP_FADE", payload: { clipId: clip.id, fadeIn: newFade } });
+				} else if (dragRef.current.mode === "fade-out") {
+					const newFade = clamp(dragRef.current.startFadeOut - dtSeconds, 0, clipDuration);
+					dispatch({ type: "SET_CLIP_FADE", payload: { clipId: clip.id, fadeOut: newFade } });
 				}
 			};
 
@@ -193,9 +217,20 @@ export function Clip({
 		setContextMenu(null);
 	};
 
+	const handleClipVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+		dispatch({
+			type: "SET_CLIP_VOLUME",
+			payload: { clipId: clip.id, volume: Number(e.target.value) / 100 },
+		});
+	};
+
+	const showWaveform = trackKind === "audio" && clip.hasAudio;
+	const fadeInWidth = clip.fadeIn * pixelsPerSecond;
+	const fadeOutWidth = clip.fadeOut * pixelsPerSecond;
+
 	return (
 		<div
-			className={`clip ${isSelected ? "clip-selected" : ""}`}
+			className={`clip clip-${trackKind} ${isSelected ? "clip-selected" : ""}`}
 			style={{ left: `${left}px`, width: `${width}px` }}
 			onClick={handleSelect}
 			onContextMenu={handleContextMenu}
@@ -205,7 +240,32 @@ export function Clip({
 				onMouseDown={(e) => handleMouseDown(e, "trim-left")}
 			/>
 			<div className="clip-body" onMouseDown={(e) => handleMouseDown(e, "move")}>
+				{showWaveform && (
+					<Waveform sourceFile={clip.sourceFile} inPoint={clip.inPoint} outPoint={clip.outPoint} />
+				)}
 				<span className="clip-label">{clip.fileName}</span>
+				{clip.fadeIn > 0 && (
+					<div className="clip-fade clip-fade-in" style={{ width: `${fadeInWidth}px` }} />
+				)}
+				{clip.fadeOut > 0 && (
+					<div className="clip-fade clip-fade-out" style={{ width: `${fadeOutWidth}px` }} />
+				)}
+				{trackKind === "audio" && (
+					<>
+						<div
+							className="clip-fade-handle clip-fade-handle-in"
+							style={{ left: `${fadeInWidth}px` }}
+							onMouseDown={(e) => handleMouseDown(e, "fade-in")}
+							title={`フェードイン ${clip.fadeIn.toFixed(2)}s`}
+						/>
+						<div
+							className="clip-fade-handle clip-fade-handle-out"
+							style={{ right: `${fadeOutWidth}px` }}
+							onMouseDown={(e) => handleMouseDown(e, "fade-out")}
+							title={`フェードアウト ${clip.fadeOut.toFixed(2)}s`}
+						/>
+					</>
+				)}
 			</div>
 			<div
 				className="clip-handle clip-handle-right"
@@ -260,6 +320,18 @@ export function Clip({
 					>
 						リップル削除 (Shift+Del)
 					</button>
+					{clip.hasAudio && (
+						<div className="menu-slider-row">
+							<span>音量 {Math.round(clip.volume * 100)}%</span>
+							<input
+								type="range"
+								min={0}
+								max={200}
+								value={Math.round(clip.volume * 100)}
+								onChange={handleClipVolumeChange}
+							/>
+						</div>
+					)}
 				</div>
 			)}
 		</div>

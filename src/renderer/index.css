@@ -142,13 +142,28 @@ body {
 }
 
 .clip-context-menu {
-	min-width: 160px;
+	min-width: 220px;
 	background: #1a1a2e;
 	border: 1px solid #0f3460;
 	border-radius: 4px;
 	padding: 4px 0;
 	z-index: 200;
 	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.menu-slider-row {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 8px 12px;
+	font-size: 11px;
+	color: #bbb;
+	border-top: 1px solid #0f3460;
+}
+
+.menu-slider-row input[type="range"] {
+	width: 100%;
+	accent-color: #6ac0ff;
 }
 
 .time-display {
@@ -325,16 +340,71 @@ body {
 	margin: 4px 0;
 }
 
+.track-audio {
+	height: 52px;
+}
+
 .track-label {
-	width: 40px;
+	width: 88px;
 	display: flex;
-	align-items: center;
+	flex-direction: column;
+	align-items: stretch;
 	justify-content: center;
+	gap: 2px;
+	padding: 2px 4px;
 	font-size: 11px;
 	color: #888;
 	background: #1a1a2e;
 	border-right: 1px solid #0f3460;
 	flex-shrink: 0;
+}
+
+.track-name {
+	font-weight: bold;
+	color: #bbb;
+	text-align: left;
+}
+
+.track-audio .track-name {
+	color: #6ac0ff;
+}
+
+.track-controls {
+	display: flex;
+	gap: 3px;
+}
+
+.track-toggle {
+	flex: 1;
+	border: 1px solid #0f3460;
+	background: #1a1a2e;
+	color: #888;
+	cursor: pointer;
+	font-size: 10px;
+	padding: 1px 0;
+	border-radius: 2px;
+}
+
+.track-toggle:hover {
+	background: #0f3460;
+}
+
+.track-toggle-active {
+	background: #e94560;
+	color: #fff;
+	border-color: #e94560;
+}
+
+.track-toggle-solo {
+	background: #f5a623;
+	color: #1a1a2e;
+	border-color: #f5a623;
+}
+
+.track-volume {
+	width: 100%;
+	accent-color: #6ac0ff;
+	height: 12px;
 }
 
 .track-clips {
@@ -379,6 +449,59 @@ body {
 	padding: 0 8px;
 	cursor: grab;
 	overflow: hidden;
+	position: relative;
+}
+
+.clip-audio .clip-body {
+	background: #1d4f6e;
+}
+
+.clip-waveform {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+	opacity: 0.85;
+}
+
+.clip-fade {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+	background: linear-gradient(to right, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+}
+
+.clip-fade-in {
+	left: 0;
+}
+
+.clip-fade-out {
+	right: 0;
+	background: linear-gradient(to left, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+}
+
+.clip-fade-handle {
+	position: absolute;
+	top: 0;
+	width: 10px;
+	height: 10px;
+	background: #f5a623;
+	cursor: ew-resize;
+	border-radius: 50%;
+	transform: translateX(-50%);
+	z-index: 3;
+	opacity: 0.85;
+}
+
+.clip-fade-handle-out {
+	transform: translateX(50%);
+}
+
+.clip-fade-handle:hover {
+	opacity: 1;
+	box-shadow: 0 0 4px rgba(245, 166, 35, 0.7);
 }
 
 .clip-body:active {
@@ -406,19 +529,20 @@ body {
 /* Add Track Button */
 .add-track-row {
 	display: flex;
+	gap: 4px;
 	height: 28px;
 	margin: 4px 0;
 	padding-left: 0;
 }
 
 .add-track-btn {
-	width: 40px;
+	width: 42px;
 	height: 28px;
 	border: 1px dashed #0f3460;
 	background: transparent;
 	color: #888;
 	cursor: pointer;
-	font-size: 16px;
+	font-size: 12px;
 	display: flex;
 	align-items: center;
 	justify-content: center;

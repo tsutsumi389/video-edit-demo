@@ -1,3 +1,5 @@
+export type TrackKind = "video" | "audio";
+
 export interface Clip {
 	id: string;
 	sourceFile: string;
@@ -8,11 +10,20 @@ export interface Clip {
 	duration: number;
 	width: number;
 	height: number;
+	hasAudio: boolean;
+	hasVideo: boolean;
+	volume: number;
+	fadeIn: number;
+	fadeOut: number;
 }
 
 export interface Track {
 	id: string;
+	kind: TrackKind;
 	clips: Clip[];
+	volume: number;
+	muted: boolean;
+	solo: boolean;
 }
 
 export interface Marker {
@@ -32,6 +43,8 @@ export interface MediaInfo {
 	duration: number;
 	width: number;
 	height: number;
+	hasAudio: boolean;
+	hasVideo: boolean;
 }
 
 export interface ProjectFile {
@@ -40,7 +53,7 @@ export interface ProjectFile {
 	markers?: Marker[];
 }
 
-export const PROJECT_FILE_VERSION = 1;
+export const PROJECT_FILE_VERSION = 2;
 
 export type ProjectAction =
 	| { type: "ADD_CLIP"; payload: { clip: Clip; trackId: string } }
@@ -56,8 +69,13 @@ export type ProjectAction =
 			payload: { trackId: string; trackPosition: number; ripple: boolean };
 	  }
 	| { type: "DUPLICATE_CLIP"; payload: { clipId: string } }
-	| { type: "ADD_TRACK" }
+	| { type: "SET_CLIP_VOLUME"; payload: { clipId: string; volume: number } }
+	| { type: "SET_CLIP_FADE"; payload: { clipId: string; fadeIn?: number; fadeOut?: number } }
+	| { type: "ADD_TRACK"; payload?: { kind?: TrackKind } }
 	| { type: "REMOVE_TRACK"; payload: { trackId: string } }
+	| { type: "SET_TRACK_VOLUME"; payload: { trackId: string; volume: number } }
+	| { type: "SET_TRACK_MUTED"; payload: { trackId: string; muted: boolean } }
+	| { type: "SET_TRACK_SOLO"; payload: { trackId: string; solo: boolean } }
 	| { type: "ADD_MARKER"; payload: { time: number; label?: string } }
 	| { type: "REMOVE_MARKER"; payload: { markerId: string } }
 	| { type: "UPDATE_MARKER"; payload: { markerId: string; label?: string; time?: number } }

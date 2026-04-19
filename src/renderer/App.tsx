@@ -4,10 +4,34 @@ import { Timeline } from "./components/Timeline";
 import { ToastProvider } from "./components/ToastProvider";
 import { Toolbar } from "./components/Toolbar";
 import { usePlayback } from "./hooks/usePlayback";
-import { ProjectContext, useProjectReducer } from "./hooks/useProject";
+import { normalizeLoadedProject, ProjectContext, useProjectReducer } from "./hooks/useProject";
 import { useToast } from "./hooks/useToast";
-import { PROJECT_FILE_VERSION, type ProjectFile } from "./types/project";
+import { PROJECT_FILE_VERSION, type ProjectFile, type Track } from "./types/project";
 import { flattenTracks } from "./utils/flatten";
+
+function buildExportPayload(tracks: Track[], totalDuration: number) {
+	const videoTracks = tracks.filter((t) => t.kind === "video");
+	const videoEdl = flattenTracks(videoTracks);
+	const audioTracks = tracks.map((t) => ({
+		id: t.id,
+		kind: t.kind,
+		volume: t.volume,
+		muted: t.muted,
+		solo: t.solo,
+		clips: t.clips.map((c) => ({
+			sourceFile: c.sourceFile,
+			inPoint: c.inPoint,
+			outPoint: c.outPoint,
+			trackPosition: c.trackPosition,
+			volume: c.volume,
+			fadeIn: c.fadeIn,
+			fadeOut: c.fadeOut,
+			hasAudio: c.hasAudio,
+			hasVideo: c.hasVideo,
+		})),
+	}));
+	return { videoEdl, audioTracks, totalDuration };
+}
 
 function AppInner() {
 	const project = useProjectReducer();
@@ -15,6 +39,9 @@ function AppInner() {
 	const { showToast } = useToast();
 	const [projectFilePath, setProjectFilePath] = useState<string | null>(null);
 	const [exportProgress, setExportProgress] = useState<number | null>(null);
+
+	const tracks = project.state.current.tracks;
+	const totalDuration = playback.totalDuration;
 
 	const handleImport = useCallback(async () => {
 		try {
@@ -26,15 +53,15 @@ function AppInner() {
 	}, [project.addClipFromMedia, showToast]);
 
 	const handleExport = useCallback(async () => {
-		const edl = flattenTracks(project.state.current.tracks);
-		if (edl.length === 0) {
+		if (!tracks.some((t) => t.clips.length > 0)) {
 			showToast("書き出すクリップがありません", "info");
 			return;
 		}
+		const payload = buildExportPayload(tracks, totalDuration);
 		setExportProgress(0);
 		const cleanup = window.api.onExportProgress(setExportProgress);
 		try {
-			const path = await window.api.exportProject(edl);
+			const path = await window.api.exportProject(payload);
 			if (path) showToast(`エクスポート完了: ${path}`, "success");
 		} catch (err) {
 			showToast(`エクスポートに失敗しました: ${(err as Error).message}`, "error");
@@ -42,7 +69,7 @@ function AppInner() {
 			cleanup();
 			setExportProgress(null);
 		}
-	}, [project.state.current.tracks, showToast]);
+	}, [tracks, totalDuration, showToast]);
 
 	const handleSave = useCallback(
 		async (saveAs: boolean) => {
@@ -72,18 +99,8 @@ function AppInner() {
 			const result = await window.api.openProject();
 			if (!result) return;
 			const parsed = JSON.parse(result.content) as ProjectFile;
-			if (typeof parsed !== "object" || parsed === null || !Array.isArray(parsed.tracks)) {
-				throw new Error("不正なプロジェクトファイル形式です");
-			}
-			project.dispatch({
-				type: "LOAD_PROJECT",
-				payload: {
-					project: {
-						tracks: parsed.tracks,
-						markers: Array.isArray(parsed.markers) ? parsed.markers : [],
-					},
-				},
-			});
+			const normalized = normalizeLoadedProject(parsed);
+			project.dispatch({ type: "LOAD_PROJECT", payload: { project: normalized } });
 			setProjectFilePath(result.filePath);
 			playback.seek(0);
 			showToast(`プロジェクトを開きました: ${result.filePath}`, "success");
@@ -95,7 +112,29 @@ function AppInner() {
 	const handleNew = useCallback(() => {
 		project.dispatch({
 			type: "LOAD_PROJECT",
-			payload: { project: { tracks: [{ id: "track-1", clips: [] }], markers: [] } },
+			payload: {
+				project: {
+					tracks: [
+						{
+							id: "track-1",
+							kind: "video",
+							clips: [],
+							volume: 1,
+							muted: false,
+							solo: false,
+						},
+						{
+							id: "track-a1",
+							kind: "audio",
+							clips: [],
+							volume: 1,
+							muted: false,
+							solo: false,
+						},
+					],
+					markers: [],
+				},
+			},
 		});
 		setProjectFilePath(null);
 		playback.seek(0);
