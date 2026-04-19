@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ExportDialog, ExportProgressDialog } from "./components/ExportDialog";
 import { Preview } from "./components/Preview";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { Timeline } from "./components/Timeline";
@@ -12,15 +13,58 @@ import {
 	useProjectReducer,
 } from "./hooks/useProject";
 import { useToast } from "./hooks/useToast";
+import { DEFAULT_EXPORT_SETTINGS, type ExportRange, type ExportSettings } from "./types/export";
 import {
+	type Clip,
 	PROJECT_FILE_VERSION,
 	type ProjectFile,
 	type Track,
 	type Transition,
 } from "./types/project";
 import { flattenTracks } from "./utils/flatten";
+import { clamp } from "./utils/time";
 
-function buildExportPayload(tracks: Track[], transitions: Transition[], totalDuration: number) {
+function trimToRange(
+	tracks: Track[],
+	transitions: Transition[],
+	range: { start: number; end: number },
+): { tracks: Track[]; transitions: Transition[] } {
+	const keptIds = new Set<string>();
+	const newTracks: Track[] = tracks.map((t) => {
+		const newClips = t.clips.flatMap<Clip>((c) => {
+			const playDur = (c.outPoint - c.inPoint) / c.speed;
+			const clipStart = c.trackPosition;
+			const clipEnd = clipStart + playDur;
+			if (clipEnd <= range.start || clipStart >= range.end) return [];
+			const overlapStart = Math.max(clipStart, range.start);
+			const overlapEnd = Math.min(clipEnd, range.end);
+			const sourceOffsetStart = (overlapStart - clipStart) * c.speed;
+			const sourceOffsetEnd = (overlapEnd - clipStart) * c.speed;
+			const next: Clip = {
+				...c,
+				inPoint: c.inPoint + sourceOffsetStart,
+				outPoint: c.inPoint + sourceOffsetEnd,
+				trackPosition: overlapStart - range.start,
+				fadeIn: clipStart < range.start ? 0 : c.fadeIn,
+				fadeOut: clipEnd > range.end ? 0 : c.fadeOut,
+			};
+			keptIds.add(c.id);
+			return [next];
+		});
+		return { ...t, clips: newClips };
+	});
+	const newTransitions = transitions.filter(
+		(tr) => keptIds.has(tr.clipAId) && keptIds.has(tr.clipBId),
+	);
+	return { tracks: newTracks, transitions: newTransitions };
+}
+
+function buildExportPayload(
+	tracks: Track[],
+	transitions: Transition[],
+	totalDuration: number,
+	settings: ExportSettings,
+) {
 	const videoTracks = tracks.filter((t) => t.kind === "video");
 	const videoEdl = flattenTracks(videoTracks);
 	const audioTracks = tracks.map((t) => ({
@@ -61,7 +105,23 @@ function buildExportPayload(tracks: Track[], transitions: Transition[], totalDur
 					text: c.text,
 				})),
 		);
-	return { videoEdl, audioTracks, overlays, transitions, totalDuration };
+	const { range: _range, ...mainSettings } = settings;
+	return { videoEdl, audioTracks, overlays, transitions, totalDuration, settings: mainSettings };
+}
+
+function resolveEffectiveTimeline(
+	tracks: Track[],
+	transitions: Transition[],
+	totalDuration: number,
+	range: ExportRange | null,
+): { tracks: Track[]; transitions: Transition[]; totalDuration: number } {
+	if (!range) return { tracks, transitions, totalDuration };
+	const clamped = {
+		start: clamp(range.start, 0, totalDuration),
+		end: clamp(range.end, 0, totalDuration),
+	};
+	const trimmed = trimToRange(tracks, transitions, clamped);
+	return { ...trimmed, totalDuration: Math.max(0.1, clamped.end - clamped.start) };
 }
 
 function AppInner() {
@@ -70,6 +130,8 @@ function AppInner() {
 	const { showToast } = useToast();
 	const [projectFilePath, setProjectFilePath] = useState<string | null>(null);
 	const [exportProgress, setExportProgress] = useState<number | null>(null);
+	const [exportDialogOpen, setExportDialogOpen] = useState(false);
+	const [lastExportSettings, setLastExportSettings] = useState<ExportSettings | null>(null);
 
 	const tracks = project.state.current.tracks;
 	const transitions = project.state.current.transitions;
@@ -132,24 +194,55 @@ function AppInner() {
 		});
 	}, [tracks, playback.currentTime, project.dispatch, showToast]);
 
-	const handleExport = useCallback(async () => {
+	const handleExportRequest = useCallback(() => {
 		if (!tracks.some((t) => t.clips.length > 0)) {
 			showToast("書き出すクリップがありません", "info");
 			return;
 		}
-		const payload = buildExportPayload(tracks, transitions, totalDuration);
-		setExportProgress(0);
-		const cleanup = window.api.onExportProgress(setExportProgress);
-		try {
-			const path = await window.api.exportProject(payload);
-			if (path) showToast(`エクスポート完了: ${path}`, "success");
-		} catch (err) {
-			showToast(`エクスポートに失敗しました: ${(err as Error).message}`, "error");
-		} finally {
-			cleanup();
-			setExportProgress(null);
-		}
-	}, [tracks, transitions, totalDuration, showToast]);
+		setExportDialogOpen(true);
+	}, [tracks, showToast]);
+
+	const handleExportCancel = useCallback(() => setExportDialogOpen(false), []);
+
+	const exportInitialSettings = useMemo<ExportSettings>(
+		() => lastExportSettings ?? DEFAULT_EXPORT_SETTINGS,
+		[lastExportSettings],
+	);
+
+	const runExport = useCallback(
+		async (settings: ExportSettings) => {
+			setLastExportSettings(settings);
+			setExportDialogOpen(false);
+			const effective = resolveEffectiveTimeline(
+				tracks,
+				transitions,
+				totalDuration,
+				settings.range,
+			);
+			if (!effective.tracks.some((t) => t.clips.length > 0)) {
+				showToast("指定範囲に書き出すクリップがありません", "info");
+				return;
+			}
+			const payload = buildExportPayload(
+				effective.tracks,
+				effective.transitions,
+				effective.totalDuration,
+				settings,
+			);
+			setExportProgress(0);
+			const cleanup = window.api.onExportProgress(setExportProgress);
+			try {
+				const path = await window.api.exportProject(payload);
+				if (path) showToast(`エクスポート完了: ${path}`, "success");
+			} catch (err) {
+				showToast(`エクスポートに失敗しました: ${(err as Error).message}`, "error");
+			} finally {
+				cleanup();
+				setExportProgress(null);
+			}
+		},
+		[tracks, transitions, totalDuration, showToast],
+	);
 
 	const handleSave = useCallback(
 		async (saveAs: boolean) => {
@@ -229,8 +322,20 @@ function AppInner() {
 		showToast("新規プロジェクトを作成しました", "info");
 	}, [project.dispatch, playback.seek, showToast]);
 
-	const handlersRef = useRef({ handleImport, handleExport, handleSave, handleOpen, handleNew });
-	handlersRef.current = { handleImport, handleExport, handleSave, handleOpen, handleNew };
+	const handlersRef = useRef({
+		handleImport,
+		handleExport: handleExportRequest,
+		handleSave,
+		handleOpen,
+		handleNew,
+	});
+	handlersRef.current = {
+		handleImport,
+		handleExport: handleExportRequest,
+		handleSave,
+		handleOpen,
+		handleNew,
+	};
 
 	useEffect(() => {
 		const unsubs = [
@@ -255,7 +360,7 @@ function AppInner() {
 					totalDuration={playback.totalDuration}
 					onTogglePlayPause={playback.togglePlayPause}
 					onImport={handleImport}
-					onExport={handleExport}
+					onExport={handleExportRequest}
 					onSave={() => handleSave(false)}
 					onSaveAs={() => handleSave(true)}
 					onOpen={handleOpen}
@@ -277,6 +382,14 @@ function AppInner() {
 					onSetTotalDuration={playback.setTotalDuration}
 					onTogglePlayPause={playback.togglePlayPause}
 				/>
+				<ExportDialog
+					open={exportDialogOpen}
+					totalDuration={totalDuration}
+					initialSettings={exportInitialSettings}
+					onCancel={handleExportCancel}
+					onConfirm={runExport}
+				/>
+				<ExportProgressDialog progress={exportProgress} />
 			</div>
 		</ProjectContext.Provider>
 	);

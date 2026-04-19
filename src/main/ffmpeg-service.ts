@@ -117,12 +117,39 @@ export interface ExportVideoSegment {
 	transform: { scale: number; offsetX: number; offsetY: number };
 }
 
+export type ExportCodec = "h264" | "h265" | "prores";
+
+export type ExportContainer = "mp4" | "mov";
+
+export interface ExportSettings {
+	presetId: string;
+	width: number;
+	height: number;
+	fps: number;
+	videoBitrate: number;
+	audioBitrate: number;
+	codec: ExportCodec;
+	container: ExportContainer;
+}
+
 export interface ExportPayload {
 	videoEdl: ExportVideoSegment[];
 	audioTracks: ExportTrack[];
 	overlays: ExportOverlay[];
 	transitions: ExportTransition[];
 	totalDuration: number;
+	settings: ExportSettings;
+}
+
+function videoCodecOptions(settings: ExportSettings): string[] {
+	if (settings.codec === "prores") {
+		return ["-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le"];
+	}
+	const encoder = settings.codec === "h265" ? "libx265" : "libx264";
+	const opts = ["-c:v", encoder, "-preset", "fast", "-pix_fmt", "yuv420p"];
+	if (settings.codec === "h265") opts.push("-tag:v", "hvc1");
+	if (settings.videoBitrate > 0) opts.push("-b:v", `${settings.videoBitrate}k`);
+	return opts;
 }
 
 interface AudioSegmentSpec {
@@ -193,7 +220,7 @@ function buildAudioFilter(segments: AudioSegmentSpec[], totalDuration: number): 
 	return parts.join(";");
 }
 
-function buildVideoFilterChain(entry: ExportVideoSegment): string {
+function buildVideoFilterChain(entry: ExportVideoSegment, settings: ExportSettings): string {
 	const filters: string[] = [];
 	if (entry.speed !== 1) {
 		filters.push(`setpts=PTS/${entry.speed.toFixed(4)}`);
@@ -211,18 +238,27 @@ function buildVideoFilterChain(entry: ExportVideoSegment): string {
 			`scale=iw*${scale.toFixed(3)}:ih*${scale.toFixed(3)},pad=iw/${scale.toFixed(3)}:ih/${scale.toFixed(3)}:(ow-iw)/2+${Math.round(offsetX * 500)}:(oh-ih)/2+${Math.round(offsetY * 500)}:color=black,crop=iw:ih`,
 		);
 	}
+	// Normalize every segment to the export resolution / fps so concat -c copy works.
+	filters.push(
+		`scale=${settings.width}:${settings.height}:force_original_aspect_ratio=decrease`,
+		`pad=${settings.width}:${settings.height}:(ow-iw)/2:(oh-ih)/2:color=black`,
+		"setsar=1",
+		`fps=${settings.fps}`,
+	);
 	return filters.join(",");
 }
 
 async function renderVideoTrack(
 	edl: ExportPayload["videoEdl"],
+	settings: ExportSettings,
 	tmpDir: string,
 	onProgress: (percent: number) => void,
 ): Promise<string | null> {
 	if (edl.length === 0) return null;
 
 	const concurrency = Math.max(1, Math.min(edl.length, os.cpus().length));
-	const segments: string[] = edl.map((_, i) => path.join(tmpDir, `seg_${i}.mp4`));
+	const segExt = settings.codec === "prores" ? "mov" : "mp4";
+	const segments: string[] = edl.map((_, i) => path.join(tmpDir, `seg_${i}.${segExt}`));
 	let completed = 0;
 
 	const encode = (entry: ExportVideoSegment, segPath: string) =>
@@ -234,12 +270,12 @@ async function renderVideoTrack(
 				"-t",
 				srcDuration.toFixed(3),
 			]);
-			const filterChain = buildVideoFilterChain(entry);
+			const filterChain = buildVideoFilterChain(entry, settings);
 			if (filterChain) {
 				cmd.videoFilters(filterChain);
 			}
 			cmd
-				.outputOptions(["-c:v", "libx264", "-an", "-preset", "fast"])
+				.outputOptions([...videoCodecOptions(settings), "-an", "-r", String(settings.fps)])
 				.output(segPath)
 				.on("end", () => {
 					completed++;
@@ -263,7 +299,7 @@ async function renderVideoTrack(
 	const concatContent = segments.map((s) => `file '${s}'`).join("\n");
 	fs.writeFileSync(concatListPath, concatContent);
 
-	const videoOnlyPath = path.join(tmpDir, "video_only.mp4");
+	const videoOnlyPath = path.join(tmpDir, `video_only.${segExt}`);
 	await new Promise<void>((resolve, reject) => {
 		ffmpeg()
 			.input(concatListPath)
@@ -356,6 +392,7 @@ export async function exportTimeline(
 	onProgress: (percent: number) => void,
 ): Promise<void> {
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-edit-"));
+	const settings = payload.settings;
 
 	const cleanup = () => {
 		try {
@@ -382,7 +419,7 @@ export async function exportTimeline(
 			}
 		}
 
-		const videoOnlyPath = await renderVideoTrack(payload.videoEdl, tmpDir, onProgress);
+		const videoOnlyPath = await renderVideoTrack(payload.videoEdl, settings, tmpDir, onProgress);
 
 		await new Promise<void>((resolve, reject) => {
 			const cmd = ffmpeg();
@@ -418,7 +455,8 @@ export async function exportTimeline(
 					filterParts.push(`[${videoInputIndex}:v]null[vbase]`);
 					filterParts.push(overlayResult.filterPart);
 					outputOptions.push("-map", "[vout]");
-					outputOptions.push("-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p");
+					outputOptions.push(...videoCodecOptions(settings));
+					outputOptions.push("-r", String(settings.fps));
 				} else {
 					outputOptions.push("-map", `${videoInputIndex}:v`);
 					outputOptions.push("-c:v", "copy");
@@ -427,7 +465,7 @@ export async function exportTimeline(
 
 			outputOptions.push("-map", "[aout]");
 			outputOptions.push("-c:a", "aac");
-			outputOptions.push("-b:a", "192k");
+			outputOptions.push("-b:a", `${Math.max(32, settings.audioBitrate)}k`);
 			outputOptions.push("-shortest");
 
 			cmd
