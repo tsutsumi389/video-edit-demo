@@ -1,9 +1,12 @@
-import type { Track } from "../types/project";
+import type { ClipFilter, ClipTransform, Track } from "../types/project";
 
-interface EDLEntry {
+export interface EDLEntry {
 	sourceFile: string;
 	inPoint: number;
 	outPoint: number;
+	speed: number;
+	filter: ClipFilter;
+	transform: ClipTransform;
 }
 
 interface TaggedSegment {
@@ -13,67 +16,76 @@ interface TaggedSegment {
 	timelineStart: number;
 	timelineEnd: number;
 	priority: number;
+	speed: number;
+	filter: ClipFilter;
+	transform: ClipTransform;
 }
 
 /**
  * Flatten multiple tracks into a sequential EDL.
  * Higher track index = higher priority (topmost wins).
  * Overlapping regions are resolved by keeping the highest-priority clip.
+ * Only media clips (kind === "media" and hasVideo) contribute to the video EDL.
  */
 export function flattenTracks(tracks: Track[]): EDLEntry[] {
-	// Collect all segments with priority
 	const segments: TaggedSegment[] = [];
 	for (let i = 0; i < tracks.length; i++) {
 		for (const clip of tracks[i].clips) {
-			const clipDuration = clip.outPoint - clip.inPoint;
+			if (clip.kind !== "media" || !clip.hasVideo) continue;
+			const srcDuration = clip.outPoint - clip.inPoint;
+			const playDuration = srcDuration / clip.speed;
 			segments.push({
 				sourceFile: clip.sourceFile,
 				inPoint: clip.inPoint,
 				outPoint: clip.outPoint,
 				timelineStart: clip.trackPosition,
-				timelineEnd: clip.trackPosition + clipDuration,
+				timelineEnd: clip.trackPosition + playDuration,
 				priority: i,
+				speed: clip.speed,
+				filter: clip.filter,
+				transform: clip.transform,
 			});
 		}
 	}
 
 	if (segments.length === 0) return [];
 
-	// Sort by priority descending, then by timelineStart
 	segments.sort((a, b) => b.priority - a.priority || a.timelineStart - b.timelineStart);
 
-	// Build coverage from highest priority first
 	const resolved: TaggedSegment[] = [];
 	const covered: { start: number; end: number }[] = [];
 
 	for (const seg of segments) {
-		// Find uncovered portions of this segment
 		const uncovered = subtractCoverage(seg.timelineStart, seg.timelineEnd, covered);
 
 		for (const [uStart, uEnd] of uncovered) {
-			const offsetStart = uStart - seg.timelineStart;
-			const offsetEnd = uEnd - seg.timelineStart;
+			const timelineOffsetStart = uStart - seg.timelineStart;
+			const timelineOffsetEnd = uEnd - seg.timelineStart;
+			// Convert timeline-space offsets back to source-space offsets using speed.
+			const sourceOffsetStart = timelineOffsetStart * seg.speed;
+			const sourceOffsetEnd = timelineOffsetEnd * seg.speed;
 			resolved.push({
 				...seg,
-				inPoint: seg.inPoint + offsetStart,
-				outPoint: seg.inPoint + offsetEnd,
+				inPoint: seg.inPoint + sourceOffsetStart,
+				outPoint: seg.inPoint + sourceOffsetEnd,
 				timelineStart: uStart,
 				timelineEnd: uEnd,
 			});
 		}
 
-		// Mark this segment's range as covered
 		covered.push({ start: seg.timelineStart, end: seg.timelineEnd });
 		mergeCoverage(covered);
 	}
 
-	// Sort resolved segments by timeline position
 	resolved.sort((a, b) => a.timelineStart - b.timelineStart);
 
 	return resolved.map((s) => ({
 		sourceFile: s.sourceFile,
 		inPoint: s.inPoint,
 		outPoint: s.outPoint,
+		speed: s.speed,
+		filter: s.filter,
+		transform: s.transform,
 	}));
 }
 
@@ -88,10 +100,8 @@ function subtractCoverage(
 		const next: [number, number][] = [];
 		for (const [iStart, iEnd] of intervals) {
 			if (c.end <= iStart || c.start >= iEnd) {
-				// No overlap
 				next.push([iStart, iEnd]);
 			} else {
-				// Overlap: split into uncovered parts
 				if (iStart < c.start) next.push([iStart, c.start]);
 				if (iEnd > c.end) next.push([c.end, iEnd]);
 			}

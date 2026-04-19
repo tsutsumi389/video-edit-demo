@@ -1,6 +1,20 @@
 import { createContext, useCallback, useContext, useReducer } from "react";
 import { v4 as uuidv4 } from "uuid";
-import type { Clip, MediaInfo, Project, ProjectAction, Track, TrackKind } from "../types/project";
+import {
+	type Clip,
+	type ClipFilter,
+	type ClipTransform,
+	DEFAULT_FILTER,
+	DEFAULT_TEXT_STYLE,
+	DEFAULT_TRANSFORM,
+	type MediaInfo,
+	type Project,
+	type ProjectAction,
+	type TextStyle,
+	type Track,
+	type TrackKind,
+	type Transition,
+} from "../types/project";
 import { clamp } from "../utils/time";
 
 interface ProjectState {
@@ -26,6 +40,7 @@ const initialState: ProjectState = {
 	current: {
 		tracks: [createTrack("video", "track-1"), createTrack("audio", "track-a1")],
 		markers: [],
+		transitions: [],
 	},
 	undoStack: [],
 	redoStack: [],
@@ -46,6 +61,19 @@ export function findClipTrack(
 
 function updateTrackById(tracks: Track[], trackId: string, updater: (t: Track) => Track): Track[] {
 	return tracks.map((t) => (t.id === trackId ? updater(t) : t));
+}
+
+function updateClipById(
+	tracks: Track[],
+	clipId: string,
+	updater: (clip: Clip) => Clip,
+): Track[] | null {
+	const found = findClipTrack(tracks, clipId);
+	if (!found) return null;
+	return updateTrackById(tracks, found.track.id, (t) => ({
+		...t,
+		clips: t.clips.map((c) => (c.id === clipId ? updater(c) : c)),
+	}));
 }
 
 function clampToTrackBounds(
@@ -89,8 +117,13 @@ function clampFadeBounds(clip: Clip, fadeIn: number, fadeOut: number): { in: num
 	return { in: safeIn, out: safeOut };
 }
 
+function dropTransitionsForClip(transitions: Transition[], clipId: string): Transition[] {
+	return transitions.filter((t) => t.clipAId !== clipId && t.clipBId !== clipId);
+}
+
 function projectReducer(state: ProjectState, action: ProjectAction): ProjectState {
 	if (action.type === "SELECT_CLIP") {
+		if (state.selectedClipId === action.payload.clipId) return state;
 		return { ...state, selectedClipId: action.payload.clipId };
 	}
 
@@ -157,6 +190,7 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 						...t,
 						clips: t.clips.filter((c) => c.id !== clipId),
 					})),
+					transitions: dropTransitionsForClip(withUndo.current.transitions, clipId),
 				},
 				selectedClipId: state.selectedClipId === clipId ? null : state.selectedClipId,
 			};
@@ -180,6 +214,7 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 							-removedDuration,
 						),
 					})),
+					transitions: dropTransitionsForClip(withUndo.current.transitions, clipId),
 				},
 				selectedClipId: state.selectedClipId === clipId ? null : state.selectedClipId,
 			};
@@ -187,28 +222,18 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 
 		case "TRIM_CLIP": {
 			const { clipId, inPoint, outPoint } = action.payload;
-			const found = findClipTrack(withUndo.current.tracks, clipId);
-			if (!found) return state;
-			return {
-				...withUndo,
-				current: {
-					...withUndo.current,
-					tracks: updateTrackById(withUndo.current.tracks, found.track.id, (t) => ({
-						...t,
-						clips: t.clips.map((c) => {
-							if (c.id !== clipId) return c;
-							const newIn = inPoint ?? c.inPoint;
-							const newOut = outPoint ?? c.outPoint;
-							const { in: fIn, out: fOut } = clampFadeBounds(
-								{ ...c, inPoint: newIn, outPoint: newOut },
-								c.fadeIn,
-								c.fadeOut,
-							);
-							return { ...c, inPoint: newIn, outPoint: newOut, fadeIn: fIn, fadeOut: fOut };
-						}),
-					})),
-				},
-			};
+			const newTracks = updateClipById(withUndo.current.tracks, clipId, (c) => {
+				const newIn = inPoint ?? c.inPoint;
+				const newOut = outPoint ?? c.outPoint;
+				const { in: fIn, out: fOut } = clampFadeBounds(
+					{ ...c, inPoint: newIn, outPoint: newOut },
+					c.fadeIn,
+					c.fadeOut,
+				);
+				return { ...c, inPoint: newIn, outPoint: newOut, fadeIn: fIn, fadeOut: fOut };
+			});
+			if (!newTracks) return state;
+			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
 		}
 
 		case "SPLIT_CLIP": {
@@ -222,14 +247,21 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 
 			if (splitSourceTime <= clip.inPoint || splitSourceTime >= clip.outPoint) return state;
 
+			const newBId = uuidv4();
 			const clipA: Clip = { ...clip, outPoint: splitSourceTime, fadeOut: 0 };
 			const clipB: Clip = {
 				...clip,
-				id: uuidv4(),
+				id: newBId,
 				inPoint: splitSourceTime,
 				trackPosition: clip.trackPosition + relativeTime,
 				fadeIn: 0,
 			};
+
+			const remappedTransitions = withUndo.current.transitions.map((tr) => {
+				// After split, the second half takes over as the outgoing side.
+				if (tr.clipAId === clipId) return { ...tr, clipAId: newBId };
+				return tr;
+			});
 
 			return {
 				...withUndo,
@@ -241,6 +273,7 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 						newClips.splice(idx, 1, clipA, clipB);
 						return { ...t, clips: newClips };
 					}),
+					transitions: remappedTransitions,
 				},
 			};
 		}
@@ -352,42 +385,163 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 
 		case "SET_CLIP_VOLUME": {
 			const { clipId, volume } = action.payload;
-			const found = findClipTrack(withUndo.current.tracks, clipId);
-			if (!found) return state;
 			const clamped = clamp(volume, 0, 2);
-			return {
-				...withUndo,
-				current: {
-					...withUndo.current,
-					tracks: updateTrackById(withUndo.current.tracks, found.track.id, (t) => ({
-						...t,
-						clips: t.clips.map((c) => (c.id === clipId ? { ...c, volume: clamped } : c)),
-					})),
-				},
-			};
+			const newTracks = updateClipById(withUndo.current.tracks, clipId, (c) => ({
+				...c,
+				volume: clamped,
+			}));
+			if (!newTracks) return state;
+			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
 		}
 
 		case "SET_CLIP_FADE": {
 			const { clipId, fadeIn, fadeOut } = action.payload;
+			const newTracks = updateClipById(withUndo.current.tracks, clipId, (c) => {
+				const { in: fIn, out: fOut } = clampFadeBounds(c, fadeIn ?? c.fadeIn, fadeOut ?? c.fadeOut);
+				return { ...c, fadeIn: fIn, fadeOut: fOut };
+			});
+			if (!newTracks) return state;
+			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
+		}
+
+		case "SET_CLIP_SPEED": {
+			const { clipId, speed } = action.payload;
 			const found = findClipTrack(withUndo.current.tracks, clipId);
-			if (!found) return state;
+			if (!found || found.clip.kind !== "media") return state;
+			const clamped = clamp(speed, 0.25, 4);
+			const newTracks = updateClipById(withUndo.current.tracks, clipId, (c) => ({
+				...c,
+				speed: clamped,
+			}));
+			if (!newTracks) return state;
+			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
+		}
+
+		case "SET_CLIP_FILTER": {
+			const { clipId, filter } = action.payload;
+			const newTracks = updateClipById(withUndo.current.tracks, clipId, (c) => {
+				const nextFilter: ClipFilter = {
+					brightness: clamp(filter.brightness ?? c.filter.brightness, -1, 1),
+					contrast: clamp(filter.contrast ?? c.filter.contrast, 0, 4),
+					saturation: clamp(filter.saturation ?? c.filter.saturation, 0, 3),
+				};
+				return { ...c, filter: nextFilter };
+			});
+			if (!newTracks) return state;
+			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
+		}
+
+		case "SET_CLIP_TRANSFORM": {
+			const { clipId, transform } = action.payload;
+			const newTracks = updateClipById(withUndo.current.tracks, clipId, (c) => {
+				const nextTransform: ClipTransform = {
+					scale: clamp(transform.scale ?? c.transform.scale, 0.1, 5),
+					offsetX: clamp(transform.offsetX ?? c.transform.offsetX, -1, 1),
+					offsetY: clamp(transform.offsetY ?? c.transform.offsetY, -1, 1),
+				};
+				return { ...c, transform: nextTransform };
+			});
+			if (!newTracks) return state;
+			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
+		}
+
+		case "SET_CLIP_TEXT": {
+			const { clipId, text } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found || found.clip.kind !== "text" || !found.clip.text) return state;
+			const newTracks = updateClipById(withUndo.current.tracks, clipId, (c) => {
+				const current = c.text as TextStyle;
+				const nextText: TextStyle = {
+					text: text.text ?? current.text,
+					fontSize: clamp(text.fontSize ?? current.fontSize, 8, 400),
+					color: text.color ?? current.color,
+					backgroundColor:
+						text.backgroundColor === undefined ? current.backgroundColor : text.backgroundColor,
+				};
+				return { ...c, text: nextText };
+			});
+			if (!newTracks) return state;
+			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
+		}
+
+		case "ADD_TEXT_CLIP": {
+			const { trackId, trackPosition, duration } = action.payload;
+			const targetTrack = withUndo.current.tracks.find((t) => t.id === trackId);
+			if (!targetTrack || targetTrack.kind !== "video") return state;
+			const newClipId = uuidv4();
+			const pos = clampToTrackBounds(targetTrack.clips, newClipId, duration, trackPosition);
+			const newClip: Clip = {
+				id: newClipId,
+				kind: "text",
+				sourceFile: "",
+				fileName: "テキスト",
+				inPoint: 0,
+				outPoint: duration,
+				trackPosition: pos,
+				duration,
+				width: 0,
+				height: 0,
+				hasAudio: false,
+				hasVideo: false,
+				volume: 1,
+				fadeIn: 0,
+				fadeOut: 0,
+				speed: 1,
+				filter: { ...DEFAULT_FILTER },
+				transform: { ...DEFAULT_TRANSFORM },
+				text: { ...DEFAULT_TEXT_STYLE },
+			};
 			return {
 				...withUndo,
 				current: {
 					...withUndo.current,
-					tracks: updateTrackById(withUndo.current.tracks, found.track.id, (t) => ({
+					tracks: updateTrackById(withUndo.current.tracks, trackId, (t) => ({
 						...t,
-						clips: t.clips.map((c) => {
-							if (c.id !== clipId) return c;
-							const { in: fIn, out: fOut } = clampFadeBounds(
-								c,
-								fadeIn ?? c.fadeIn,
-								fadeOut ?? c.fadeOut,
-							);
-							return { ...c, fadeIn: fIn, fadeOut: fOut };
-						}),
+						clips: [...t.clips, newClip],
 					})),
 				},
+				selectedClipId: newClipId,
+			};
+		}
+
+		case "ADD_IMAGE_CLIP": {
+			const { trackId, trackPosition, sourceFile, fileName, width, height, duration } =
+				action.payload;
+			const targetTrack = withUndo.current.tracks.find((t) => t.id === trackId);
+			if (!targetTrack || targetTrack.kind !== "video") return state;
+			const newClipId = uuidv4();
+			const pos = clampToTrackBounds(targetTrack.clips, newClipId, duration, trackPosition);
+			const newClip: Clip = {
+				id: newClipId,
+				kind: "image",
+				sourceFile,
+				fileName,
+				inPoint: 0,
+				outPoint: duration,
+				trackPosition: pos,
+				duration,
+				width,
+				height,
+				hasAudio: false,
+				hasVideo: false,
+				volume: 1,
+				fadeIn: 0,
+				fadeOut: 0,
+				speed: 1,
+				filter: { ...DEFAULT_FILTER },
+				transform: { ...DEFAULT_TRANSFORM },
+				text: null,
+			};
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					tracks: updateTrackById(withUndo.current.tracks, trackId, (t) => ({
+						...t,
+						clips: [...t.clips, newClip],
+					})),
+				},
+				selectedClipId: newClipId,
 			};
 		}
 
@@ -412,6 +566,9 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 				current: {
 					...withUndo.current,
 					tracks: withUndo.current.tracks.filter((t) => t.id !== trackId),
+					transitions: withUndo.current.transitions.filter(
+						(tr) => !removedClipIds.includes(tr.clipAId) && !removedClipIds.includes(tr.clipBId),
+					),
 				},
 				selectedClipId:
 					state.selectedClipId && removedClipIds.includes(state.selectedClipId)
@@ -499,6 +656,58 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 			};
 		}
 
+		case "ADD_TRANSITION": {
+			const { clipAId, clipBId, duration, kind } = action.payload;
+			const a = findClipTrack(withUndo.current.tracks, clipAId);
+			const b = findClipTrack(withUndo.current.tracks, clipBId);
+			if (!a || !b || a.track.id !== b.track.id) return state;
+			if (a.track.kind !== "video") return state;
+			const aDuration = a.clip.outPoint - a.clip.inPoint;
+			const bDuration = b.clip.outPoint - b.clip.inPoint;
+			const maxAllowed = Math.min(aDuration, bDuration) * 0.5;
+			const clamped = clamp(duration, 0.05, Math.max(0.05, maxAllowed));
+			const existing = withUndo.current.transitions.filter(
+				(t) => t.clipAId !== clipAId || t.clipBId !== clipBId,
+			);
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					transitions: [...existing, { id: uuidv4(), clipAId, clipBId, duration: clamped, kind }],
+				},
+			};
+		}
+
+		case "REMOVE_TRANSITION": {
+			const { transitionId } = action.payload;
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					transitions: withUndo.current.transitions.filter((t) => t.id !== transitionId),
+				},
+			};
+		}
+
+		case "SET_TRANSITION": {
+			const { transitionId, duration, kind } = action.payload;
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					transitions: withUndo.current.transitions.map((t) =>
+						t.id === transitionId
+							? {
+									...t,
+									duration: duration !== undefined ? clamp(duration, 0.05, 10) : t.duration,
+									kind: kind ?? t.kind,
+								}
+							: t,
+					),
+				},
+			};
+		}
+
 		case "LOAD_PROJECT": {
 			return {
 				current: action.payload.project,
@@ -543,6 +752,7 @@ export function useProjectReducer() {
 
 			const baseClip: Clip = {
 				id: uuidv4(),
+				kind: "media",
 				sourceFile: media.filePath,
 				fileName: media.fileName,
 				inPoint: 0,
@@ -556,6 +766,10 @@ export function useProjectReducer() {
 				volume: 1,
 				fadeIn: 0,
 				fadeOut: 0,
+				speed: 1,
+				filter: { ...DEFAULT_FILTER },
+				transform: { ...DEFAULT_TRANSFORM },
+				text: null,
 			};
 
 			dispatch({ type: "ADD_CLIP", payload: { clip: baseClip, trackId: track.id } });
@@ -572,11 +786,47 @@ export function useProject(): ProjectContextValue {
 	return ctx;
 }
 
+function normalizeFilter(raw: unknown): ClipFilter {
+	const f = (raw ?? {}) as Partial<ClipFilter>;
+	return {
+		brightness: typeof f.brightness === "number" ? f.brightness : DEFAULT_FILTER.brightness,
+		contrast: typeof f.contrast === "number" ? f.contrast : DEFAULT_FILTER.contrast,
+		saturation: typeof f.saturation === "number" ? f.saturation : DEFAULT_FILTER.saturation,
+	};
+}
+
+function normalizeTransform(raw: unknown): ClipTransform {
+	const t = (raw ?? {}) as Partial<ClipTransform>;
+	return {
+		scale: typeof t.scale === "number" ? t.scale : DEFAULT_TRANSFORM.scale,
+		offsetX: typeof t.offsetX === "number" ? t.offsetX : DEFAULT_TRANSFORM.offsetX,
+		offsetY: typeof t.offsetY === "number" ? t.offsetY : DEFAULT_TRANSFORM.offsetY,
+	};
+}
+
+function normalizeTextStyle(raw: unknown): TextStyle | null {
+	if (!raw || typeof raw !== "object") return null;
+	const s = raw as Partial<TextStyle>;
+	return {
+		text: typeof s.text === "string" ? s.text : DEFAULT_TEXT_STYLE.text,
+		fontSize: typeof s.fontSize === "number" ? s.fontSize : DEFAULT_TEXT_STYLE.fontSize,
+		color: typeof s.color === "string" ? s.color : DEFAULT_TEXT_STYLE.color,
+		backgroundColor:
+			typeof s.backgroundColor === "string" || s.backgroundColor === null
+				? s.backgroundColor
+				: null,
+	};
+}
+
 export function normalizeLoadedProject(raw: unknown): Project {
 	if (typeof raw !== "object" || raw === null) {
 		throw new Error("プロジェクトファイル形式が不正です");
 	}
-	const candidate = raw as Partial<Project> & { tracks?: unknown; markers?: unknown };
+	const candidate = raw as Partial<Project> & {
+		tracks?: unknown;
+		markers?: unknown;
+		transitions?: unknown;
+	};
 	if (!Array.isArray(candidate.tracks)) {
 		throw new Error("プロジェクトファイル形式が不正です: tracks が配列ではありません");
 	}
@@ -587,8 +837,11 @@ export function normalizeLoadedProject(raw: unknown): Project {
 			? tr.clips.map((c: unknown) => {
 					const cl = c as Partial<Clip>;
 					const duration = cl.duration ?? (cl.outPoint ?? 0) - (cl.inPoint ?? 0);
+					const clipKind =
+						cl.kind === "text" || cl.kind === "image" || cl.kind === "media" ? cl.kind : "media";
 					return {
 						id: cl.id ?? uuidv4(),
+						kind: clipKind,
 						sourceFile: cl.sourceFile ?? "",
 						fileName: cl.fileName ?? "",
 						inPoint: cl.inPoint ?? 0,
@@ -597,11 +850,18 @@ export function normalizeLoadedProject(raw: unknown): Project {
 						duration,
 						width: cl.width ?? 0,
 						height: cl.height ?? 0,
-						hasAudio: cl.hasAudio ?? true,
-						hasVideo: cl.hasVideo ?? kind === "video",
+						hasAudio: cl.hasAudio ?? clipKind === "media",
+						hasVideo: cl.hasVideo ?? (clipKind === "media" && kind === "video"),
 						volume: cl.volume ?? 1,
 						fadeIn: cl.fadeIn ?? 0,
 						fadeOut: cl.fadeOut ?? 0,
+						speed: typeof cl.speed === "number" ? cl.speed : 1,
+						filter: normalizeFilter(cl.filter),
+						transform: normalizeTransform(cl.transform),
+						text:
+							clipKind === "text"
+								? (normalizeTextStyle(cl.text) ?? { ...DEFAULT_TEXT_STYLE })
+								: null,
 					};
 				})
 			: [];
@@ -615,5 +875,21 @@ export function normalizeLoadedProject(raw: unknown): Project {
 		};
 	});
 	const markers = Array.isArray(candidate.markers) ? (candidate.markers as Project["markers"]) : [];
-	return { tracks, markers };
+	const rawTransitions = Array.isArray(candidate.transitions) ? candidate.transitions : [];
+	const transitions: Transition[] = rawTransitions.flatMap((t: unknown) => {
+		if (!t || typeof t !== "object") return [];
+		const tr = t as Partial<Transition>;
+		if (!tr.clipAId || !tr.clipBId) return [];
+		const kind: Transition["kind"] = tr.kind === "fade-to-black" ? "fade-to-black" : "crossfade";
+		return [
+			{
+				id: tr.id ?? uuidv4(),
+				clipAId: tr.clipAId,
+				clipBId: tr.clipBId,
+				duration: typeof tr.duration === "number" ? tr.duration : 0.5,
+				kind,
+			},
+		];
+	});
+	return { tracks, markers, transitions };
 }

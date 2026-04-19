@@ -224,13 +224,17 @@ export function Clip({
 		});
 	};
 
-	const showWaveform = trackKind === "audio" && clip.hasAudio;
+	const showWaveform = trackKind === "audio" && clip.hasAudio && clip.kind === "media";
 	const fadeInWidth = clip.fadeIn * pixelsPerSecond;
 	const fadeOutWidth = clip.fadeOut * pixelsPerSecond;
 
+	const kindClass = clip.kind === "text" ? "clip-text" : clip.kind === "image" ? "clip-image" : "";
+	const label =
+		clip.kind === "text" && clip.text ? clip.text.text.slice(0, 24) || "テキスト" : clip.fileName;
+
 	return (
 		<div
-			className={`clip clip-${trackKind} ${isSelected ? "clip-selected" : ""}`}
+			className={`clip clip-${trackKind} ${kindClass} ${isSelected ? "clip-selected" : ""}`}
 			style={{ left: `${left}px`, width: `${width}px` }}
 			onClick={handleSelect}
 			onContextMenu={handleContextMenu}
@@ -243,7 +247,7 @@ export function Clip({
 				{showWaveform && (
 					<Waveform sourceFile={clip.sourceFile} inPoint={clip.inPoint} outPoint={clip.outPoint} />
 				)}
-				<span className="clip-label">{clip.fileName}</span>
+				<span className="clip-label">{label}</span>
 				{clip.fadeIn > 0 && (
 					<div className="clip-fade clip-fade-in" style={{ width: `${fadeInWidth}px` }} />
 				)}

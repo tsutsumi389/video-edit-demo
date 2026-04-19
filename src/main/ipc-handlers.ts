@@ -1,6 +1,13 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { BrowserWindow, dialog, ipcMain } from "electron";
-import { type ExportPayload, exportTimeline, extractWaveform, probe } from "./ffmpeg-service";
+import {
+	type ExportPayload,
+	exportTimeline,
+	extractWaveform,
+	probe,
+	probeImage,
+} from "./ffmpeg-service";
 
 const PROJECT_FILTERS = [
 	{ name: "Video Edit Project (*.vedit.json, *.json)", extensions: ["json"] },
@@ -20,6 +27,8 @@ const MEDIA_EXTENSIONS = [
 	"ogg",
 ];
 
+const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+
 export function registerIpcHandlers(): void {
 	ipcMain.handle("file:import", async () => {
 		const result = await dialog.showOpenDialog({
@@ -34,6 +43,19 @@ export function registerIpcHandlers(): void {
 		const filePath = result.filePaths[0];
 		const info = await probe(filePath);
 		return info;
+	});
+
+	ipcMain.handle("file:importImage", async () => {
+		const result = await dialog.showOpenDialog({
+			properties: ["openFile"],
+			filters: [{ name: "Image Files", extensions: IMAGE_EXTENSIONS }],
+		});
+		if (result.canceled || result.filePaths.length === 0) {
+			return null;
+		}
+		const filePath = result.filePaths[0];
+		const info = await probeImage(filePath);
+		return { filePath, fileName: path.basename(filePath), width: info.width, height: info.height };
 	});
 
 	ipcMain.handle("file:export", async (event, payload: ExportPayload) => {

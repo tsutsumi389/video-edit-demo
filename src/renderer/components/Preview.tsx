@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useProject } from "../hooks/useProject";
-import type { Clip, Track } from "../types/project";
+import type { Clip, Track, Transition } from "../types/project";
 
 interface PreviewProps {
 	currentTime: number;
@@ -28,6 +28,71 @@ function computeFadeGain(clip: Clip, currentTime: number): number {
 	return gain;
 }
 
+interface TransitionGain {
+	outgoing: number;
+	incoming: number;
+	activeTransition: Transition | null;
+	incomingClip: Clip | null;
+}
+
+function computeTransitionGain(
+	currentClip: Clip,
+	currentTime: number,
+	track: Track,
+	transitions: Transition[],
+): TransitionGain {
+	let outgoing = 1;
+	let incoming = 0;
+	let activeTransition: Transition | null = null;
+	let incomingClip: Clip | null = null;
+
+	const duration = currentClip.outPoint - currentClip.inPoint;
+	const clipEnd = currentClip.trackPosition + duration;
+	const localTime = currentTime - currentClip.trackPosition;
+
+	const outgoingTrans = transitions.find((t) => t.clipAId === currentClip.id);
+	if (outgoingTrans) {
+		const other = track.clips.find((c) => c.id === outgoingTrans.clipBId);
+		if (other) {
+			const transStart = clipEnd - outgoingTrans.duration;
+			if (currentTime >= transStart && currentTime < clipEnd) {
+				const progress = (currentTime - transStart) / outgoingTrans.duration;
+				outgoing = 1 - progress;
+				incoming = progress;
+				activeTransition = outgoingTrans;
+				incomingClip = other;
+			}
+		}
+	}
+
+	const incomingTrans = transitions.find((t) => t.clipBId === currentClip.id);
+	if (incomingTrans && !activeTransition) {
+		const transStart = currentClip.trackPosition;
+		const transEnd = transStart + incomingTrans.duration;
+		if (currentTime >= transStart && currentTime < transEnd && localTime < incomingTrans.duration) {
+			const progress = localTime / incomingTrans.duration;
+			outgoing = progress;
+		}
+	}
+
+	return { outgoing, incoming, activeTransition, incomingClip };
+}
+
+function buildVideoFilterString(clip: Clip): string {
+	const { brightness, contrast, saturation } = clip.filter;
+	// CSS brightness: 1 = neutral. Map ffmpeg-like brightness (-1..1) → CSS multiplier.
+	const cssBrightness = 1 + brightness;
+	return `brightness(${cssBrightness}) contrast(${contrast}) saturate(${saturation})`;
+}
+
+function buildVideoTransformString(clip: Clip): string {
+	const { scale, offsetX, offsetY } = clip.transform;
+	// offsetX/Y: -1..1 maps to -50%..50% of preview
+	const translateX = offsetX * 50;
+	const translateY = offsetY * 50;
+	return `translate(${translateX}%, ${translateY}%) scale(${scale})`;
+}
+
 export function Preview({ currentTime, isPlaying }: PreviewProps) {
 	const { state } = useProject();
 	const videoRef = useRef<HTMLVideoElement>(null);
@@ -36,28 +101,50 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 	const lastAudioSrcRef = useRef<Map<string, string>>(new Map());
 
 	const tracks = state.current.tracks;
+	const transitions = state.current.transitions;
 	const videoTracks = useMemo(() => tracks.filter((t) => t.kind === "video"), [tracks]);
 	const audioTracks = useMemo(() => tracks.filter((t) => t.kind === "audio"), [tracks]);
 	const anySolo = useMemo(() => tracks.some((t) => t.solo), [tracks]);
 
-	const activeVideoClip = useMemo(() => {
+	const activeMedia = useMemo(() => {
 		for (let i = videoTracks.length - 1; i >= 0; i--) {
-			const clip = findActiveClip(videoTracks[i], currentTime);
-			if (clip) return { clip, track: videoTracks[i] };
+			const t = videoTracks[i];
+			const clip = findActiveClip(t, currentTime);
+			if (clip && clip.kind === "media" && clip.hasVideo) return { clip, track: t };
 		}
 		return undefined;
 	}, [videoTracks, currentTime]);
 
-	const videoTrackAudible = activeVideoClip
-		? !activeVideoClip.track.muted && (!anySolo || activeVideoClip.track.solo)
+	const overlays = useMemo(() => {
+		const list: Array<{ clip: Clip; opacity: number }> = [];
+		for (let i = videoTracks.length - 1; i >= 0; i--) {
+			const t = videoTracks[i];
+			const clip = findActiveClip(t, currentTime);
+			if (!clip) continue;
+			if (clip.kind === "text" || clip.kind === "image") {
+				const fade = computeFadeGain(clip, currentTime);
+				list.push({ clip, opacity: fade });
+			}
+		}
+		return list;
+	}, [videoTracks, currentTime]);
+
+	const transitionInfo = useMemo(() => {
+		if (!activeMedia) return null;
+		return computeTransitionGain(activeMedia.clip, currentTime, activeMedia.track, transitions);
+	}, [activeMedia, currentTime, transitions]);
+
+	const videoTrackAudible = activeMedia
+		? !activeMedia.track.muted && (!anySolo || activeMedia.track.solo)
 		: false;
 
 	useEffect(() => {
 		const video = videoRef.current;
-		if (!video || !activeVideoClip) return;
+		if (!video || !activeMedia) return;
 
-		const { clip, track } = activeVideoClip;
-		const clipLocalTime = clip.inPoint + (currentTime - clip.trackPosition);
+		const { clip, track } = activeMedia;
+		const localPos = currentTime - clip.trackPosition;
+		const clipLocalTime = clip.inPoint + localPos * clip.speed;
 
 		if (lastSrcRef.current !== clip.sourceFile) {
 			video.src = window.api.getMediaUrl(clip.sourceFile);
@@ -67,12 +154,13 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 			video.currentTime = clipLocalTime;
 		}
 
+		if (video.playbackRate !== clip.speed) video.playbackRate = clip.speed;
+
 		const desiredMuted = !videoTrackAudible || !clip.hasAudio;
 		if (video.muted !== desiredMuted) video.muted = desiredMuted;
-		const desiredVolume = Math.min(
-			1,
-			track.volume * clip.volume * computeFadeGain(clip, currentTime),
-		);
+		const fadeGain = computeFadeGain(clip, currentTime);
+		const transitionGain = transitionInfo?.outgoing ?? 1;
+		const desiredVolume = Math.min(1, track.volume * clip.volume * fadeGain * transitionGain);
 		if (video.volume !== desiredVolume) video.volume = desiredVolume;
 
 		if (isPlaying && video.paused) {
@@ -82,7 +170,7 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 		} else if (!isPlaying && !video.paused) {
 			video.pause();
 		}
-	}, [currentTime, isPlaying, activeVideoClip, videoTrackAudible]);
+	}, [currentTime, isPlaying, activeMedia, videoTrackAudible, transitionInfo]);
 
 	useEffect(() => {
 		const existing = audioRefs.current;
@@ -98,7 +186,8 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 				continue;
 			}
 
-			const localTime = activeClip.inPoint + (currentTime - activeClip.trackPosition);
+			const localPos = currentTime - activeClip.trackPosition;
+			const localTime = activeClip.inPoint + localPos * activeClip.speed;
 
 			if (lastAudioSrcRef.current.get(track.id) !== activeClip.sourceFile) {
 				el.src = window.api.getMediaUrl(activeClip.sourceFile);
@@ -107,6 +196,8 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 			} else if (Math.abs(el.currentTime - localTime) > 0.3) {
 				el.currentTime = localTime;
 			}
+
+			if (el.playbackRate !== activeClip.speed) el.playbackRate = activeClip.speed;
 
 			const desiredVolume = Math.min(
 				1,
@@ -136,10 +227,35 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 
 	const hasVideoClips = videoTracks.some((t) => t.clips.length > 0);
 
+	const videoFilter = activeMedia ? buildVideoFilterString(activeMedia.clip) : "none";
+	const videoTransform = activeMedia ? buildVideoTransformString(activeMedia.clip) : "none";
+	const videoOpacity = transitionInfo ? transitionInfo.outgoing : 1;
+
 	return (
 		<div className="preview">
 			{hasVideoClips ? (
-				<video ref={videoRef} className="preview-video" />
+				<div className="preview-stage">
+					<video
+						ref={videoRef}
+						className="preview-video"
+						style={{
+							filter: videoFilter,
+							transform: videoTransform,
+							opacity: videoOpacity,
+						}}
+					/>
+					{transitionInfo?.incomingClip && transitionInfo.activeTransition && (
+						<TransitionIncomingLayer
+							clip={transitionInfo.incomingClip}
+							opacity={transitionInfo.incoming}
+							currentTime={currentTime}
+							transitionKind={transitionInfo.activeTransition.kind}
+						/>
+					)}
+					{overlays.map(({ clip, opacity }) => (
+						<OverlayLayer key={clip.id} clip={clip} opacity={opacity} />
+					))}
+				</div>
 			) : (
 				<div className="preview-placeholder">オーディオのみ</div>
 			)}
@@ -156,4 +272,86 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 			))}
 		</div>
 	);
+}
+
+function TransitionIncomingLayer({
+	clip,
+	opacity,
+	currentTime,
+	transitionKind,
+}: {
+	clip: Clip;
+	opacity: number;
+	currentTime: number;
+	transitionKind: Transition["kind"];
+}) {
+	const ref = useRef<HTMLVideoElement>(null);
+	const lastSrcRef = useRef<string>("");
+
+	useEffect(() => {
+		const video = ref.current;
+		if (!video) return;
+		if (lastSrcRef.current !== clip.sourceFile) {
+			video.src = window.api.getMediaUrl(clip.sourceFile);
+			lastSrcRef.current = clip.sourceFile;
+		}
+		const localPos = Math.max(0, currentTime - clip.trackPosition);
+		const localTime = clip.inPoint + localPos * clip.speed;
+		if (Math.abs(video.currentTime - localTime) > 0.2) {
+			video.currentTime = localTime;
+		}
+		video.muted = true;
+		video.playbackRate = clip.speed;
+	}, [clip, currentTime]);
+
+	if (transitionKind === "fade-to-black") {
+		// During fade-to-black, the outgoing fades to black first, then incoming fades in.
+		return null;
+	}
+
+	return (
+		<video
+			ref={ref}
+			className="preview-video preview-transition-layer"
+			style={{
+				opacity,
+				filter: buildVideoFilterString(clip),
+				transform: buildVideoTransformString(clip),
+			}}
+		/>
+	);
+}
+
+function OverlayLayer({ clip, opacity }: { clip: Clip; opacity: number }) {
+	const transform = buildVideoTransformString(clip);
+
+	if (clip.kind === "text" && clip.text) {
+		return (
+			<div
+				className="preview-overlay preview-text-overlay"
+				style={{
+					opacity,
+					transform,
+					fontSize: `${clip.text.fontSize}px`,
+					color: clip.text.color,
+					backgroundColor: clip.text.backgroundColor ?? "transparent",
+				}}
+			>
+				{clip.text.text}
+			</div>
+		);
+	}
+
+	if (clip.kind === "image") {
+		return (
+			<img
+				className="preview-overlay preview-image-overlay"
+				src={window.api.getMediaUrl(clip.sourceFile)}
+				alt={clip.fileName}
+				style={{ opacity, transform, filter: buildVideoFilterString(clip) }}
+			/>
+		);
+	}
+
+	return null;
 }

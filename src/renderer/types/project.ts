@@ -1,7 +1,31 @@
 export type TrackKind = "video" | "audio";
 
+export type ClipKind = "media" | "text" | "image";
+
+export type TransitionKind = "crossfade" | "fade-to-black";
+
+export interface ClipFilter {
+	brightness: number;
+	contrast: number;
+	saturation: number;
+}
+
+export interface ClipTransform {
+	scale: number;
+	offsetX: number;
+	offsetY: number;
+}
+
+export interface TextStyle {
+	text: string;
+	fontSize: number;
+	color: string;
+	backgroundColor: string | null;
+}
+
 export interface Clip {
 	id: string;
+	kind: ClipKind;
 	sourceFile: string;
 	fileName: string;
 	inPoint: number;
@@ -15,6 +39,10 @@ export interface Clip {
 	volume: number;
 	fadeIn: number;
 	fadeOut: number;
+	speed: number;
+	filter: ClipFilter;
+	transform: ClipTransform;
+	text: TextStyle | null;
 }
 
 export interface Track {
@@ -32,9 +60,18 @@ export interface Marker {
 	label: string;
 }
 
+export interface Transition {
+	id: string;
+	clipAId: string;
+	clipBId: string;
+	duration: number;
+	kind: TransitionKind;
+}
+
 export interface Project {
 	tracks: Track[];
 	markers: Marker[];
+	transitions: Transition[];
 }
 
 export interface MediaInfo {
@@ -51,9 +88,29 @@ export interface ProjectFile {
 	version: number;
 	tracks: Track[];
 	markers?: Marker[];
+	transitions?: Transition[];
 }
 
-export const PROJECT_FILE_VERSION = 2;
+export const PROJECT_FILE_VERSION = 3;
+
+export const DEFAULT_FILTER: ClipFilter = {
+	brightness: 0,
+	contrast: 1,
+	saturation: 1,
+};
+
+export const DEFAULT_TRANSFORM: ClipTransform = {
+	scale: 1,
+	offsetX: 0,
+	offsetY: 0,
+};
+
+export const DEFAULT_TEXT_STYLE: TextStyle = {
+	text: "テキスト",
+	fontSize: 72,
+	color: "#ffffff",
+	backgroundColor: null,
+};
 
 export type ProjectAction =
 	| { type: "ADD_CLIP"; payload: { clip: Clip; trackId: string } }
@@ -71,6 +128,29 @@ export type ProjectAction =
 	| { type: "DUPLICATE_CLIP"; payload: { clipId: string } }
 	| { type: "SET_CLIP_VOLUME"; payload: { clipId: string; volume: number } }
 	| { type: "SET_CLIP_FADE"; payload: { clipId: string; fadeIn?: number; fadeOut?: number } }
+	| { type: "SET_CLIP_SPEED"; payload: { clipId: string; speed: number } }
+	| { type: "SET_CLIP_FILTER"; payload: { clipId: string; filter: Partial<ClipFilter> } }
+	| {
+			type: "SET_CLIP_TRANSFORM";
+			payload: { clipId: string; transform: Partial<ClipTransform> };
+	  }
+	| { type: "SET_CLIP_TEXT"; payload: { clipId: string; text: Partial<TextStyle> } }
+	| {
+			type: "ADD_TEXT_CLIP";
+			payload: { trackId: string; trackPosition: number; duration: number };
+	  }
+	| {
+			type: "ADD_IMAGE_CLIP";
+			payload: {
+				trackId: string;
+				trackPosition: number;
+				sourceFile: string;
+				fileName: string;
+				width: number;
+				height: number;
+				duration: number;
+			};
+	  }
 	| { type: "ADD_TRACK"; payload?: { kind?: TrackKind } }
 	| { type: "REMOVE_TRACK"; payload: { trackId: string } }
 	| { type: "SET_TRACK_VOLUME"; payload: { trackId: string; volume: number } }
@@ -79,6 +159,15 @@ export type ProjectAction =
 	| { type: "ADD_MARKER"; payload: { time: number; label?: string } }
 	| { type: "REMOVE_MARKER"; payload: { markerId: string } }
 	| { type: "UPDATE_MARKER"; payload: { markerId: string; label?: string; time?: number } }
+	| {
+			type: "ADD_TRANSITION";
+			payload: { clipAId: string; clipBId: string; duration: number; kind: TransitionKind };
+	  }
+	| { type: "REMOVE_TRANSITION"; payload: { transitionId: string } }
+	| {
+			type: "SET_TRANSITION";
+			payload: { transitionId: string; duration?: number; kind?: TransitionKind };
+	  }
 	| { type: "LOAD_PROJECT"; payload: { project: Project } }
 	| { type: "UNDO" }
 	| { type: "REDO" };
