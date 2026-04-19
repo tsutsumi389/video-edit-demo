@@ -1,8 +1,11 @@
 import path from "node:path";
-import { app, BrowserWindow, net, protocol } from "electron";
+import { app, BrowserWindow, ipcMain, net, protocol } from "electron";
 import started from "electron-squirrel-startup";
+import { startAutoSaveTimer } from "./autosave";
 import { registerIpcHandlers } from "./ipc-handlers";
-import { createMenu } from "./menu";
+import { log } from "./logger";
+import { createMenu, rebuildMenu } from "./menu";
+import { loadPreferences } from "./preferences";
 
 if (started) {
 	app.quit();
@@ -38,15 +41,28 @@ protocol.registerSchemesAsPrivileged([
 	},
 ]);
 
-app.on("ready", () => {
+app.on("ready", async () => {
 	protocol.handle("media-loader", (request) => {
 		const filePath = decodeURIComponent(request.url.replace("media-loader://", ""));
 		return net.fetch(`file://${filePath}`);
 	});
 
+	try {
+		await loadPreferences();
+	} catch (err) {
+		log("warn", "prefs", "設定ロードに失敗", (err as Error).message);
+	}
+
 	registerIpcHandlers();
-	createMenu();
+
+	ipcMain.handle("menu:rebuild", async () => {
+		await rebuildMenu();
+	});
+
+	await createMenu();
+	await startAutoSaveTimer();
 	createWindow();
+	log("info", "app", "起動完了");
 });
 
 app.on("window-all-closed", () => {

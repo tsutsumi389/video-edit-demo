@@ -89,10 +89,23 @@ export interface Transition {
 	kind: TransitionKind;
 }
 
+export interface MediaBinItem {
+	id: string;
+	filePath: string;
+	fileName: string;
+	duration: number;
+	width: number;
+	height: number;
+	hasAudio: boolean;
+	hasVideo: boolean;
+	addedAt: string;
+}
+
 export interface Project {
 	tracks: Track[];
 	markers: Marker[];
 	transitions: Transition[];
+	mediaBin: MediaBinItem[];
 }
 
 export interface MediaInfo {
@@ -110,9 +123,10 @@ export interface ProjectFile {
 	tracks: Track[];
 	markers?: Marker[];
 	transitions?: Transition[];
+	mediaBin?: MediaBinItem[];
 }
 
-export const PROJECT_FILE_VERSION = 4;
+export const PROJECT_FILE_VERSION = 5;
 
 export const DEFAULT_FILTER: ClipFilter = {
 	brightness: 0,
@@ -256,6 +270,20 @@ export type ProjectAction =
 			type: "SET_TRANSITION";
 			payload: { transitionId: string; duration?: number; kind?: TransitionKind };
 	  }
+	| {
+			type: "ADD_MEDIA_BIN_ITEM";
+			payload: {
+				filePath: string;
+				fileName: string;
+				duration: number;
+				width: number;
+				height: number;
+				hasAudio: boolean;
+				hasVideo: boolean;
+			};
+	  }
+	| { type: "REMOVE_MEDIA_BIN_ITEM"; payload: { itemId: string } }
+	| { type: "CLEAR_MEDIA_BIN" }
 	| { type: "LOAD_PROJECT"; payload: { project: Project } }
 	| { type: "UNDO" }
 	| { type: "REDO" };

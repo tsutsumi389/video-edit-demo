@@ -2,18 +2,30 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import {
+	clearAutoSave,
+	readAutoSave,
+	restartAutoSaveTimerFromCache,
+	writeAutoSave,
+} from "./autosave";
+import {
 	type ExportPayload,
 	exportTimeline,
 	extractWaveform,
 	probe,
 	probeImage,
 } from "./ffmpeg-service";
+import { buildDiagnostics, log } from "./logger";
+import { DEFAULT_PREFERENCES, loadPreferences, savePreferences } from "./preferences";
+import { clearProxies, ensureProxy, getExistingProxy } from "./proxy-service";
+import { addRecentFile, clearRecentFiles, listRecentFiles } from "./recent-files";
 
 const PROJECT_FILTERS = [
 	{ name: "Video Edit Project (*.vedit.json, *.json)", extensions: ["json"] },
 ];
 
 const SRT_FILTERS = [{ name: "SubRip Subtitle (*.srt)", extensions: ["srt"] }];
+
+const DIAGNOSTICS_FILTERS = [{ name: "Diagnostics (*.json)", extensions: ["json"] }];
 
 const MEDIA_EXTENSIONS = [
 	"mp4",
@@ -74,11 +86,15 @@ export function registerIpcHandlers(): void {
 
 		const win = BrowserWindow.fromWebContents(event.sender);
 
-		await exportTimeline(payload, result.filePath, (percent) => {
-			win?.webContents.send("export:progress", percent);
-		});
-
-		return result.filePath;
+		try {
+			await exportTimeline(payload, result.filePath, (percent) => {
+				win?.webContents.send("export:progress", percent);
+			});
+			return result.filePath;
+		} catch (err) {
+			log("error", "export", "エクスポートに失敗しました", (err as Error).message);
+			throw err;
+		}
 	});
 
 	const waveformInflight = new Map<string, Promise<Awaited<ReturnType<typeof extractWaveform>>>>();
@@ -104,6 +120,8 @@ export function registerIpcHandlers(): void {
 				targetPath = result.filePath;
 			}
 			await fs.writeFile(targetPath, args.data, "utf-8");
+			await addRecentFile(targetPath);
+			await clearAutoSave();
 			return targetPath;
 		},
 	);
@@ -115,6 +133,8 @@ export function registerIpcHandlers(): void {
 		});
 		if (result.canceled || !result.filePath) return null;
 		await fs.writeFile(result.filePath, data, "utf-8");
+		await addRecentFile(result.filePath);
+		await clearAutoSave();
 		return result.filePath;
 	});
 
@@ -126,7 +146,48 @@ export function registerIpcHandlers(): void {
 		if (result.canceled || result.filePaths.length === 0) return null;
 		const filePath = result.filePaths[0];
 		const content = await fs.readFile(filePath, "utf-8");
+		await addRecentFile(filePath);
 		return { filePath, content };
+	});
+
+	ipcMain.handle("project:openPath", async (_event, filePath: string) => {
+		try {
+			const content = await fs.readFile(filePath, "utf-8");
+			await addRecentFile(filePath);
+			return { filePath, content };
+		} catch (err) {
+			log("warn", "project", "パスからの読み込みに失敗", (err as Error).message);
+			return null;
+		}
+	});
+
+	ipcMain.handle(
+		"project:autoSave",
+		async (_event, args: { data: string; filePath: string | null }) => {
+			try {
+				await writeAutoSave(args.data, args.filePath);
+				return true;
+			} catch (err) {
+				log("warn", "autosave", "自動保存に失敗しました", (err as Error).message);
+				return false;
+			}
+		},
+	);
+
+	ipcMain.handle("project:autoSaveCheck", async () => {
+		return await readAutoSave();
+	});
+
+	ipcMain.handle("project:autoSaveClear", async () => {
+		await clearAutoSave();
+	});
+
+	ipcMain.handle("recent:list", async () => {
+		return await listRecentFiles();
+	});
+
+	ipcMain.handle("recent:clear", async () => {
+		await clearRecentFiles();
 	});
 
 	ipcMain.handle("srt:open", async () => {
@@ -149,4 +210,54 @@ export function registerIpcHandlers(): void {
 		await fs.writeFile(result.filePath, data, "utf-8");
 		return result.filePath;
 	});
+
+	ipcMain.handle("prefs:load", async () => {
+		return await loadPreferences();
+	});
+
+	ipcMain.handle("prefs:save", async (_event, update: unknown) => {
+		const next = await savePreferences(
+			(update as Partial<Awaited<ReturnType<typeof loadPreferences>>>) ?? {},
+		);
+		restartAutoSaveTimerFromCache();
+		return next;
+	});
+
+	ipcMain.handle("prefs:defaults", async () => DEFAULT_PREFERENCES);
+
+	ipcMain.handle("proxy:generate", async (event, filePath: string) => {
+		const win = BrowserWindow.fromWebContents(event.sender);
+		const proxy = await ensureProxy(filePath);
+		if (proxy) win?.webContents.send("proxy:ready", { filePath, proxy });
+		return proxy;
+	});
+
+	ipcMain.handle("proxy:status", async (_event, filePath: string) => {
+		return await getExistingProxy(filePath);
+	});
+
+	ipcMain.handle("proxy:clear", async () => {
+		await clearProxies();
+	});
+
+	ipcMain.handle("diagnostics:export", async () => {
+		const result = await dialog.showSaveDialog({
+			defaultPath: "video-edit-diagnostics.json",
+			filters: DIAGNOSTICS_FILTERS,
+		});
+		if (result.canceled || !result.filePath) return null;
+		const data = JSON.stringify(buildDiagnostics(), null, 2);
+		await fs.writeFile(result.filePath, data, "utf-8");
+		return result.filePath;
+	});
+
+	ipcMain.handle(
+		"diagnostics:log",
+		async (
+			_event,
+			args: { level: "info" | "warn" | "error"; source: string; message: string; detail?: string },
+		) => {
+			log(args.level, args.source, args.message, args.detail);
+		},
+	);
 }

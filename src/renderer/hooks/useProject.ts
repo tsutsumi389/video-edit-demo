@@ -13,6 +13,7 @@ import {
 	KEYFRAME_SCALE_MIN,
 	type Keyframe,
 	type KeyframeTransform,
+	type MediaBinItem,
 	type MediaInfo,
 	type Project,
 	type ProjectAction,
@@ -48,6 +49,7 @@ const initialState: ProjectState = {
 		tracks: [createTrack("video", "track-1"), createTrack("audio", "track-a1")],
 		markers: [],
 		transitions: [],
+		mediaBin: [],
 	},
 	undoStack: [],
 	redoStack: [],
@@ -824,6 +826,49 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 			};
 		}
 
+		case "ADD_MEDIA_BIN_ITEM": {
+			const existing = withUndo.current.mediaBin.find(
+				(m) => m.filePath === action.payload.filePath,
+			);
+			if (existing) return state;
+			const item: MediaBinItem = {
+				id: uuidv4(),
+				filePath: action.payload.filePath,
+				fileName: action.payload.fileName,
+				duration: action.payload.duration,
+				width: action.payload.width,
+				height: action.payload.height,
+				hasAudio: action.payload.hasAudio,
+				hasVideo: action.payload.hasVideo,
+				addedAt: new Date().toISOString(),
+			};
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					mediaBin: [...withUndo.current.mediaBin, item],
+				},
+			};
+		}
+
+		case "REMOVE_MEDIA_BIN_ITEM": {
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					mediaBin: withUndo.current.mediaBin.filter((m) => m.id !== action.payload.itemId),
+				},
+			};
+		}
+
+		case "CLEAR_MEDIA_BIN": {
+			if (withUndo.current.mediaBin.length === 0) return state;
+			return {
+				...withUndo,
+				current: { ...withUndo.current, mediaBin: [] },
+			};
+		}
+
 		case "LOAD_PROJECT": {
 			return {
 				current: action.payload.project,
@@ -842,7 +887,9 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 interface ProjectContextValue {
 	state: ProjectState;
 	dispatch: React.Dispatch<ProjectAction>;
-	addClipFromMedia: (media: MediaInfo) => void;
+	addClipFromMedia: (media: MediaInfo, options?: { registerToBin?: boolean }) => void;
+	addMediaBinItem: (media: MediaInfo) => void;
+	addClipFromBin: (itemId: string) => void;
 }
 
 export const ProjectContext = createContext<ProjectContextValue | null>(null);
@@ -859,7 +906,7 @@ export function useProjectReducer() {
 	const [state, dispatch] = useReducer(projectReducer, initialState);
 
 	const addClipFromMedia = useCallback(
-		(media: MediaInfo) => {
+		(media: MediaInfo, options?: { registerToBin?: boolean }) => {
 			const tracks = state.current.tracks;
 			const desiredKind: TrackKind = media.hasVideo ? "video" : "audio";
 			const track = tracks.find((t) => t.kind === desiredKind) ?? tracks[0];
@@ -891,11 +938,60 @@ export function useProjectReducer() {
 			};
 
 			dispatch({ type: "ADD_CLIP", payload: { clip: baseClip, trackId: track.id } });
+			if (options?.registerToBin !== false) {
+				dispatch({
+					type: "ADD_MEDIA_BIN_ITEM",
+					payload: {
+						filePath: media.filePath,
+						fileName: media.fileName,
+						duration: media.duration,
+						width: media.width,
+						height: media.height,
+						hasAudio: media.hasAudio,
+						hasVideo: media.hasVideo,
+					},
+				});
+			}
 		},
 		[state.current.tracks],
 	);
 
-	return { state, dispatch, addClipFromMedia };
+	const addMediaBinItem = useCallback((media: MediaInfo) => {
+		dispatch({
+			type: "ADD_MEDIA_BIN_ITEM",
+			payload: {
+				filePath: media.filePath,
+				fileName: media.fileName,
+				duration: media.duration,
+				width: media.width,
+				height: media.height,
+				hasAudio: media.hasAudio,
+				hasVideo: media.hasVideo,
+			},
+		});
+	}, []);
+
+	const addClipFromBin = useCallback(
+		(itemId: string) => {
+			const item = state.current.mediaBin.find((m) => m.id === itemId);
+			if (!item) return;
+			addClipFromMedia(
+				{
+					filePath: item.filePath,
+					fileName: item.fileName,
+					duration: item.duration,
+					width: item.width,
+					height: item.height,
+					hasAudio: item.hasAudio,
+					hasVideo: item.hasVideo,
+				},
+				{ registerToBin: false },
+			);
+		},
+		[state.current.mediaBin, addClipFromMedia],
+	);
+
+	return { state, dispatch, addClipFromMedia, addMediaBinItem, addClipFromBin };
 }
 
 export function useProject(): ProjectContextValue {
@@ -1042,5 +1138,26 @@ export function normalizeLoadedProject(raw: unknown): Project {
 			},
 		];
 	});
-	return { tracks, markers, transitions };
+	const rawBin = Array.isArray((candidate as { mediaBin?: unknown }).mediaBin)
+		? ((candidate as { mediaBin: unknown[] }).mediaBin as unknown[])
+		: [];
+	const mediaBin: MediaBinItem[] = rawBin.flatMap((item) => {
+		if (!item || typeof item !== "object") return [];
+		const m = item as Partial<MediaBinItem>;
+		if (typeof m.filePath !== "string" || typeof m.fileName !== "string") return [];
+		return [
+			{
+				id: m.id ?? uuidv4(),
+				filePath: m.filePath,
+				fileName: m.fileName,
+				duration: typeof m.duration === "number" ? m.duration : 0,
+				width: typeof m.width === "number" ? m.width : 0,
+				height: typeof m.height === "number" ? m.height : 0,
+				hasAudio: m.hasAudio ?? true,
+				hasVideo: m.hasVideo ?? true,
+				addedAt: m.addedAt ?? new Date().toISOString(),
+			},
+		];
+	});
+	return { tracks, markers, transitions, mediaBin };
 }
