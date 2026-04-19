@@ -18,6 +18,10 @@ interface ToolbarProps {
 	onAddImage: () => void;
 	onImportSrt: () => void;
 	onExportSrt: () => void;
+	onOpenPreferences: () => void;
+	onExportDiagnostics: () => void;
+	onToggleMediaBin: () => void;
+	mediaBinOpen: boolean;
 	projectFilePath: string | null;
 	exportProgress: number | null;
 }
@@ -37,6 +41,10 @@ export function Toolbar({
 	onAddImage,
 	onImportSrt,
 	onExportSrt,
+	onOpenPreferences,
+	onExportDiagnostics,
+	onToggleMediaBin,
+	mediaBinOpen,
 	projectFilePath,
 	exportProgress,
 }: ToolbarProps) {
@@ -180,12 +188,41 @@ export function Toolbar({
 								>
 									字幕 SRT を書き出す...
 								</button>
+								<div className="menu-separator" />
+								<button
+									type="button"
+									className="menu-dropdown-item"
+									onClick={() => {
+										setMenuOpen(null);
+										onOpenPreferences();
+									}}
+								>
+									環境設定...
+								</button>
+								<button
+									type="button"
+									className="menu-dropdown-item"
+									onClick={() => {
+										setMenuOpen(null);
+										onExportDiagnostics();
+									}}
+								>
+									診断情報を書き出す...
+								</button>
 							</div>
 						)}
 					</div>
 					<span className="project-label" title={projectFilePath ?? undefined}>
 						{projectLabel}
 					</span>
+					<button
+						type="button"
+						className="toolbar-btn"
+						onClick={onToggleMediaBin}
+						title="メディアビンを表示/非表示 (Cmd/Ctrl+B)"
+					>
+						{mediaBinOpen ? "ビン非表示" : "ビン表示"}
+					</button>
 				</div>
 			</div>
 

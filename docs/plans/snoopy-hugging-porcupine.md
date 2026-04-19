@@ -155,12 +155,12 @@
 ### Phase 7 — 運用品質
 **目標**: 長時間作業・大量素材に耐える。
 
-30. **A3 自動保存 / クラッシュ復旧**
-31. **A2 最近使ったファイル**
-32. **G2 メディアビン**
-33. **G1 プロキシ編集**
-34. **G3 環境設定ダイアログ**
-35. **G4 ログ / 診断情報**
+30. **A3 自動保存 / クラッシュ復旧** ✅ 実装済み (autosave.ts / RecoveryDialog)
+31. **A2 最近使ったファイル** ✅ 実装済み (recent-files.ts / File › Open Recent)
+32. **G2 メディアビン** ✅ 実装済み (Project.mediaBin + MediaBin パネル)
+33. **G1 プロキシ編集** ✅ 実装済み (proxy-service.ts / useProxyMap / Preview 切替)
+34. **G3 環境設定ダイアログ** ✅ 実装済み (preferences.ts / PreferencesDialog)
+35. **G4 ログ / 診断情報** ✅ 実装済み (logger.ts / File › 診断情報を書き出す)
 
 ## 修正・追加が予想される主要ファイル
 

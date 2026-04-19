@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useProject } from "../hooks/useProject";
+import { resolvePlaybackUrl, useProxyMap } from "../hooks/useProxyMap";
 import type { Clip, ClipCrop, ClipTransform, Track, Transition } from "../types/project";
 import { interpolateKeyframes } from "../utils/keyframes";
 import { clamp } from "../utils/time";
@@ -113,6 +114,7 @@ function hasCrop(crop: ClipCrop): boolean {
 
 export function Preview({ currentTime, isPlaying }: PreviewProps) {
 	const { state } = useProject();
+	useProxyMap();
 	const videoRef = useRef<HTMLVideoElement>(null);
 	const lastSrcRef = useRef<string>("");
 	const audioRefs = useRef<Map<string, HTMLAudioElement>>(new Map());
@@ -164,9 +166,10 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 		const localPos = currentTime - clip.trackPosition;
 		const clipLocalTime = clip.inPoint + localPos * clip.speed;
 
-		if (lastSrcRef.current !== clip.sourceFile) {
-			video.src = window.api.getMediaUrl(clip.sourceFile);
-			lastSrcRef.current = clip.sourceFile;
+		const desiredUrl = resolvePlaybackUrl(clip.sourceFile);
+		if (lastSrcRef.current !== desiredUrl) {
+			video.src = desiredUrl;
+			lastSrcRef.current = desiredUrl;
 			video.currentTime = clipLocalTime;
 		} else if (Math.abs(video.currentTime - clipLocalTime) > 0.3) {
 			video.currentTime = clipLocalTime;
@@ -207,9 +210,10 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 			const localPos = currentTime - activeClip.trackPosition;
 			const localTime = activeClip.inPoint + localPos * activeClip.speed;
 
-			if (lastAudioSrcRef.current.get(track.id) !== activeClip.sourceFile) {
-				el.src = window.api.getMediaUrl(activeClip.sourceFile);
-				lastAudioSrcRef.current.set(track.id, activeClip.sourceFile);
+			const desiredAudioUrl = resolvePlaybackUrl(activeClip.sourceFile);
+			if (lastAudioSrcRef.current.get(track.id) !== desiredAudioUrl) {
+				el.src = desiredAudioUrl;
+				lastAudioSrcRef.current.set(track.id, desiredAudioUrl);
 				el.currentTime = localTime;
 			} else if (Math.abs(el.currentTime - localTime) > 0.3) {
 				el.currentTime = localTime;
@@ -314,9 +318,10 @@ function TransitionIncomingLayer({
 	useEffect(() => {
 		const video = ref.current;
 		if (!video) return;
-		if (lastSrcRef.current !== clip.sourceFile) {
-			video.src = window.api.getMediaUrl(clip.sourceFile);
-			lastSrcRef.current = clip.sourceFile;
+		const desiredUrl = resolvePlaybackUrl(clip.sourceFile);
+		if (lastSrcRef.current !== desiredUrl) {
+			video.src = desiredUrl;
+			lastSrcRef.current = desiredUrl;
 		}
 		const localPos = Math.max(0, currentTime - clip.trackPosition);
 		const localTime = clip.inPoint + localPos * clip.speed;

@@ -1,13 +1,36 @@
+import path from "node:path";
 import { BrowserWindow, Menu } from "electron";
+import { listRecentFiles, type RecentFile } from "./recent-files";
 
-function sendToFocused(channel: string): void {
+function sendToFocused(channel: string, ...args: unknown[]): void {
 	const win = BrowserWindow.getFocusedWindow();
 	if (win) {
-		win.webContents.send(channel);
+		win.webContents.send(channel, ...args);
 	}
 }
 
-export function createMenu(): void {
+function buildRecentSubmenu(recent: RecentFile[]): Electron.MenuItemConstructorOptions[] {
+	if (recent.length === 0) {
+		return [{ label: "(履歴なし)", enabled: false }];
+	}
+	const items: Electron.MenuItemConstructorOptions[] = recent.map((r) => ({
+		label: path.basename(r.filePath),
+		toolTip: r.filePath,
+		click: () => sendToFocused("menu:openRecent", r.filePath),
+	}));
+	items.push(
+		{ type: "separator" },
+		{
+			label: "履歴をクリア",
+			click: () => sendToFocused("menu:clearRecent"),
+		},
+	);
+	return items;
+}
+
+export async function createMenu(): Promise<void> {
+	const recent = await listRecentFiles();
+
 	const template: Electron.MenuItemConstructorOptions[] = [
 		{
 			label: "File",
@@ -21,6 +44,10 @@ export function createMenu(): void {
 					label: "Open Project...",
 					accelerator: "CmdOrCtrl+O",
 					click: () => sendToFocused("menu:open"),
+				},
+				{
+					label: "Open Recent",
+					submenu: buildRecentSubmenu(recent),
 				},
 				{
 					label: "Save",
@@ -44,6 +71,16 @@ export function createMenu(): void {
 					click: () => sendToFocused("menu:export"),
 				},
 				{ type: "separator" },
+				{
+					label: "Preferences...",
+					accelerator: "CmdOrCtrl+,",
+					click: () => sendToFocused("menu:preferences"),
+				},
+				{
+					label: "Export Diagnostics...",
+					click: () => sendToFocused("menu:diagnostics"),
+				},
+				{ type: "separator" },
 				{ role: "quit" },
 			],
 		},
@@ -65,6 +102,12 @@ export function createMenu(): void {
 		{
 			label: "View",
 			submenu: [
+				{
+					label: "Toggle Media Bin",
+					accelerator: "CmdOrCtrl+B",
+					click: () => sendToFocused("menu:toggleMediaBin"),
+				},
+				{ type: "separator" },
 				{ role: "reload" },
 				{ role: "toggleDevTools" },
 				{ type: "separator" },
@@ -79,6 +122,12 @@ export function createMenu(): void {
 			submenu: [
 				{ role: "about" },
 				{ type: "separator" },
+				{
+					label: "Preferences...",
+					accelerator: "Cmd+,",
+					click: () => sendToFocused("menu:preferences"),
+				},
+				{ type: "separator" },
 				{ role: "hide" },
 				{ role: "hideOthers" },
 				{ role: "unhide" },
@@ -91,3 +140,5 @@ export function createMenu(): void {
 	const menu = Menu.buildFromTemplate(template);
 	Menu.setApplicationMenu(menu);
 }
+
+export const rebuildMenu = createMenu;
