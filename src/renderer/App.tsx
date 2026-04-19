@@ -18,10 +18,12 @@ import {
 	type Clip,
 	PROJECT_FILE_VERSION,
 	type ProjectFile,
+	type TextStyle,
 	type Track,
 	type Transition,
 } from "./types/project";
 import { flattenTracks } from "./utils/flatten";
+import { parseSrt, type SerializableCue, serializeSrt } from "./utils/srt";
 import { clamp } from "./utils/time";
 
 function trimToRange(
@@ -178,21 +180,87 @@ function AppInner() {
 		}
 	}, [tracks, playback.currentTime, project.dispatch, showToast]);
 
-	const handleAddText = useCallback(() => {
-		const firstVideoTrack = tracks.find((t) => t.kind === "video");
-		if (!firstVideoTrack) {
-			showToast("ビデオトラックが必要です", "error");
+	const handleAddText = useCallback(
+		(style?: TextStyle, duration?: number) => {
+			const firstVideoTrack = tracks.find((t) => t.kind === "video");
+			if (!firstVideoTrack) {
+				showToast("ビデオトラックが必要です", "error");
+				return;
+			}
+			project.dispatch({
+				type: "ADD_TEXT_CLIP",
+				payload: {
+					trackId: firstVideoTrack.id,
+					trackPosition: playback.currentTime,
+					duration: duration ?? 3,
+					style,
+				},
+			});
+		},
+		[tracks, playback.currentTime, project.dispatch, showToast],
+	);
+
+	const handleImportSrt = useCallback(async () => {
+		try {
+			const result = await window.api.openSrt();
+			if (!result) return;
+			const cues = parseSrt(result.content);
+			if (cues.length === 0) {
+				showToast("SRT から字幕を読み取れませんでした", "info");
+				return;
+			}
+			const firstVideoTrack = tracks.find((t) => t.kind === "video");
+			if (!firstVideoTrack) {
+				showToast("ビデオトラックが必要です", "error");
+				return;
+			}
+			for (const cue of cues) {
+				const style: TextStyle = {
+					text: cue.text,
+					fontSize: 48,
+					color: "#ffffff",
+					backgroundColor: "#000000",
+				};
+				project.dispatch({
+					type: "ADD_TEXT_CLIP",
+					payload: {
+						trackId: firstVideoTrack.id,
+						trackPosition: cue.start,
+						duration: Math.max(0.1, cue.end - cue.start),
+						style,
+					},
+				});
+			}
+			showToast(`${cues.length} 件の字幕を読み込みました`, "success");
+		} catch (err) {
+			showToast(`SRT 読み込みに失敗しました: ${(err as Error).message}`, "error");
+		}
+	}, [tracks, project.dispatch, showToast]);
+
+	const handleExportSrt = useCallback(async () => {
+		const textClips = tracks
+			.filter((t) => t.kind === "video")
+			.flatMap((t) =>
+				t.clips
+					.filter((c) => c.kind === "text" && c.text?.text)
+					.map<SerializableCue>((c) => ({
+						start: c.trackPosition,
+						end: c.trackPosition + (c.outPoint - c.inPoint) / (c.speed || 1),
+						text: c.text?.text ?? "",
+					})),
+			);
+		if (textClips.length === 0) {
+			showToast("書き出す字幕クリップがありません", "info");
 			return;
 		}
-		project.dispatch({
-			type: "ADD_TEXT_CLIP",
-			payload: {
-				trackId: firstVideoTrack.id,
-				trackPosition: playback.currentTime,
-				duration: 3,
-			},
-		});
-	}, [tracks, playback.currentTime, project.dispatch, showToast]);
+		try {
+			const data = serializeSrt(textClips);
+			const filePath = await window.api.saveSrt(data);
+			if (filePath) showToast(`SRT を書き出しました: ${filePath}`, "success");
+		} catch (err) {
+			showToast(`SRT 書き出しに失敗しました: ${(err as Error).message}`, "error");
+		}
+	}, [tracks, showToast]);
 
 	const handleExportRequest = useCallback(() => {
 		if (!tracks.some((t) => t.clips.length > 0)) {
@@ -367,12 +435,18 @@ function AppInner() {
 					onNew={handleNew}
 					onAddText={handleAddText}
 					onAddImage={handleImportImage}
+					onImportSrt={handleImportSrt}
+					onExportSrt={handleExportSrt}
 					projectFilePath={projectFilePath}
 					exportProgress={exportProgress}
 				/>
 				<div className="main-area">
 					<Preview currentTime={playback.currentTime} isPlaying={playback.isPlaying} />
-					<PropertiesPanel selectedClip={selectedClip} transitions={transitions} />
+					<PropertiesPanel
+						selectedClip={selectedClip}
+						transitions={transitions}
+						currentTime={playback.currentTime}
+					/>
 				</div>
 				<Timeline
 					currentTime={playback.currentTime}

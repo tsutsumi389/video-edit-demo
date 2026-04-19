@@ -13,6 +13,8 @@ const PROJECT_FILTERS = [
 	{ name: "Video Edit Project (*.vedit.json, *.json)", extensions: ["json"] },
 ];
 
+const SRT_FILTERS = [{ name: "SubRip Subtitle (*.srt)", extensions: ["srt"] }];
+
 const MEDIA_EXTENSIONS = [
 	"mp4",
 	"mov",
@@ -125,5 +127,26 @@ export function registerIpcHandlers(): void {
 		const filePath = result.filePaths[0];
 		const content = await fs.readFile(filePath, "utf-8");
 		return { filePath, content };
+	});
+
+	ipcMain.handle("srt:open", async () => {
+		const result = await dialog.showOpenDialog({
+			properties: ["openFile"],
+			filters: SRT_FILTERS,
+		});
+		if (result.canceled || result.filePaths.length === 0) return null;
+		const filePath = result.filePaths[0];
+		const content = await fs.readFile(filePath, "utf-8");
+		return { filePath, content };
+	});
+
+	ipcMain.handle("srt:save", async (_event, data: string) => {
+		const result = await dialog.showSaveDialog({
+			defaultPath: "subtitles.srt",
+			filters: SRT_FILTERS,
+		});
+		if (result.canceled || !result.filePath) return null;
+		await fs.writeFile(result.filePath, data, "utf-8");
+		return result.filePath;
 	});
 }

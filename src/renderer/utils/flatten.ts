@@ -1,4 +1,5 @@
-import type { ClipFilter, ClipTransform, Track } from "../types/project";
+import type { Clip, ClipCrop, ClipFilter, ClipTransform, Track } from "../types/project";
+import { interpolateKeyframes } from "./keyframes";
 
 export interface EDLEntry {
 	sourceFile: string;
@@ -7,18 +8,14 @@ export interface EDLEntry {
 	speed: number;
 	filter: ClipFilter;
 	transform: ClipTransform;
+	crop: ClipCrop;
 }
 
 interface TaggedSegment {
-	sourceFile: string;
-	inPoint: number;
-	outPoint: number;
+	clip: Clip;
 	timelineStart: number;
 	timelineEnd: number;
 	priority: number;
-	speed: number;
-	filter: ClipFilter;
-	transform: ClipTransform;
 }
 
 /**
@@ -35,15 +32,10 @@ export function flattenTracks(tracks: Track[]): EDLEntry[] {
 			const srcDuration = clip.outPoint - clip.inPoint;
 			const playDuration = srcDuration / clip.speed;
 			segments.push({
-				sourceFile: clip.sourceFile,
-				inPoint: clip.inPoint,
-				outPoint: clip.outPoint,
+				clip,
 				timelineStart: clip.trackPosition,
 				timelineEnd: clip.trackPosition + playDuration,
 				priority: i,
-				speed: clip.speed,
-				filter: clip.filter,
-				transform: clip.transform,
 			});
 		}
 	}
@@ -59,18 +51,7 @@ export function flattenTracks(tracks: Track[]): EDLEntry[] {
 		const uncovered = subtractCoverage(seg.timelineStart, seg.timelineEnd, covered);
 
 		for (const [uStart, uEnd] of uncovered) {
-			const timelineOffsetStart = uStart - seg.timelineStart;
-			const timelineOffsetEnd = uEnd - seg.timelineStart;
-			// Convert timeline-space offsets back to source-space offsets using speed.
-			const sourceOffsetStart = timelineOffsetStart * seg.speed;
-			const sourceOffsetEnd = timelineOffsetEnd * seg.speed;
-			resolved.push({
-				...seg,
-				inPoint: seg.inPoint + sourceOffsetStart,
-				outPoint: seg.inPoint + sourceOffsetEnd,
-				timelineStart: uStart,
-				timelineEnd: uEnd,
-			});
+			resolved.push({ ...seg, timelineStart: uStart, timelineEnd: uEnd });
 		}
 
 		covered.push({ start: seg.timelineStart, end: seg.timelineEnd });
@@ -79,14 +60,49 @@ export function flattenTracks(tracks: Track[]): EDLEntry[] {
 
 	resolved.sort((a, b) => a.timelineStart - b.timelineStart);
 
-	return resolved.map((s) => ({
-		sourceFile: s.sourceFile,
-		inPoint: s.inPoint,
-		outPoint: s.outPoint,
-		speed: s.speed,
-		filter: s.filter,
-		transform: s.transform,
-	}));
+	const entries: EDLEntry[] = [];
+	const KEYFRAME_STEP_SEC = 0.25;
+
+	for (const r of resolved) {
+		const clip = r.clip;
+		const timelineOffsetStart = r.timelineStart - clip.trackPosition;
+		const timelineOffsetEnd = r.timelineEnd - clip.trackPosition;
+
+		if (clip.keyframes.length === 0) {
+			entries.push({
+				sourceFile: clip.sourceFile,
+				inPoint: clip.inPoint + timelineOffsetStart * clip.speed,
+				outPoint: clip.inPoint + timelineOffsetEnd * clip.speed,
+				speed: clip.speed,
+				filter: clip.filter,
+				transform: clip.transform,
+				crop: clip.crop,
+			});
+			continue;
+		}
+
+		const duration = timelineOffsetEnd - timelineOffsetStart;
+		const stepCount = Math.max(1, Math.ceil(duration / KEYFRAME_STEP_SEC));
+		const step = duration / stepCount;
+
+		for (let i = 0; i < stepCount; i++) {
+			const subStart = timelineOffsetStart + step * i;
+			const subEnd = timelineOffsetStart + step * (i + 1);
+			const midLocalTime = (subStart + subEnd) / 2;
+			const midTransform = interpolateKeyframes(clip.keyframes, clip.transform, midLocalTime);
+			entries.push({
+				sourceFile: clip.sourceFile,
+				inPoint: clip.inPoint + subStart * clip.speed,
+				outPoint: clip.inPoint + subEnd * clip.speed,
+				speed: clip.speed,
+				filter: clip.filter,
+				transform: midTransform,
+				crop: clip.crop,
+			});
+		}
+	}
+
+	return entries;
 }
 
 function subtractCoverage(

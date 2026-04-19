@@ -439,6 +439,46 @@ body {
 	color: #e0e0e0;
 }
 
+.keyframe-row {
+	border: 1px solid #0f3460;
+	border-radius: 4px;
+	padding: 6px 8px;
+	margin-top: 4px;
+	background: #0f0f23;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.keyframe-row-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	font-size: 11px;
+	color: #f5a623;
+}
+
+.keyframe-time {
+	font-family: "SF Mono", "Fira Code", monospace;
+}
+
+.keyframe-remove {
+	width: 20px;
+	height: 20px;
+	border: none;
+	border-radius: 3px;
+	background: transparent;
+	color: #888;
+	cursor: pointer;
+	font-size: 14px;
+	line-height: 1;
+}
+
+.keyframe-remove:hover {
+	background: #e94560;
+	color: #fff;
+}
+
 /* Timeline */
 .timeline-container {
 	display: flex;

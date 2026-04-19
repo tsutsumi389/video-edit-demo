@@ -16,11 +16,30 @@ export interface ClipTransform {
 	offsetY: number;
 }
 
+export interface ClipCrop {
+	top: number;
+	right: number;
+	bottom: number;
+	left: number;
+}
+
 export interface TextStyle {
 	text: string;
 	fontSize: number;
 	color: string;
 	backgroundColor: string | null;
+}
+
+export interface KeyframeTransform {
+	scale: number;
+	offsetX: number;
+	offsetY: number;
+}
+
+export interface Keyframe {
+	id: string;
+	time: number;
+	transform: KeyframeTransform;
 }
 
 export interface Clip {
@@ -42,6 +61,8 @@ export interface Clip {
 	speed: number;
 	filter: ClipFilter;
 	transform: ClipTransform;
+	crop: ClipCrop;
+	keyframes: Keyframe[];
 	text: TextStyle | null;
 }
 
@@ -91,7 +112,7 @@ export interface ProjectFile {
 	transitions?: Transition[];
 }
 
-export const PROJECT_FILE_VERSION = 3;
+export const PROJECT_FILE_VERSION = 4;
 
 export const DEFAULT_FILTER: ClipFilter = {
 	brightness: 0,
@@ -105,12 +126,62 @@ export const DEFAULT_TRANSFORM: ClipTransform = {
 	offsetY: 0,
 };
 
+export const DEFAULT_CROP: ClipCrop = {
+	top: 0,
+	right: 0,
+	bottom: 0,
+	left: 0,
+};
+
+export const KEYFRAME_SCALE_MIN = 0.1;
+export const KEYFRAME_SCALE_MAX = 5;
+
 export const DEFAULT_TEXT_STYLE: TextStyle = {
 	text: "テキスト",
 	fontSize: 72,
 	color: "#ffffff",
 	backgroundColor: null,
 };
+
+export interface TitleTemplate {
+	id: string;
+	label: string;
+	duration: number;
+	style: TextStyle;
+}
+
+export const TITLE_TEMPLATES: TitleTemplate[] = [
+	{
+		id: "center-title",
+		label: "センタータイトル",
+		duration: 3,
+		style: { text: "タイトル", fontSize: 96, color: "#ffffff", backgroundColor: null },
+	},
+	{
+		id: "lower-third",
+		label: "下3分の1",
+		duration: 4,
+		style: { text: "名前 / 役職", fontSize: 48, color: "#ffffff", backgroundColor: "#0f3460" },
+	},
+	{
+		id: "caption",
+		label: "キャプション",
+		duration: 3,
+		style: { text: "キャプション", fontSize: 36, color: "#ffffff", backgroundColor: "#000000" },
+	},
+	{
+		id: "end-credits",
+		label: "エンドクレジット",
+		duration: 5,
+		style: { text: "おわり", fontSize: 72, color: "#f5a623", backgroundColor: null },
+	},
+	{
+		id: "highlight",
+		label: "ハイライト",
+		duration: 2,
+		style: { text: "NEW!", fontSize: 120, color: "#e94560", backgroundColor: null },
+	},
+];
 
 export type ProjectAction =
 	| { type: "ADD_CLIP"; payload: { clip: Clip; trackId: string } }
@@ -134,10 +205,27 @@ export type ProjectAction =
 			type: "SET_CLIP_TRANSFORM";
 			payload: { clipId: string; transform: Partial<ClipTransform> };
 	  }
+	| { type: "SET_CLIP_CROP"; payload: { clipId: string; crop: Partial<ClipCrop> } }
 	| { type: "SET_CLIP_TEXT"; payload: { clipId: string; text: Partial<TextStyle> } }
+	| { type: "ADD_KEYFRAME"; payload: { clipId: string; time: number } }
+	| { type: "REMOVE_KEYFRAME"; payload: { clipId: string; keyframeId: string } }
+	| {
+			type: "UPDATE_KEYFRAME";
+			payload: {
+				clipId: string;
+				keyframeId: string;
+				time?: number;
+				transform?: Partial<KeyframeTransform>;
+			};
+	  }
 	| {
 			type: "ADD_TEXT_CLIP";
-			payload: { trackId: string; trackPosition: number; duration: number };
+			payload: {
+				trackId: string;
+				trackPosition: number;
+				duration: number;
+				style?: TextStyle;
+			};
 	  }
 	| {
 			type: "ADD_IMAGE_CLIP";
