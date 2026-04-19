@@ -18,7 +18,10 @@ const initialState: ProjectState = {
 	selectedClipId: null,
 };
 
-function findClipTrack(tracks: Track[], clipId: string): { track: Track; clip: Clip } | null {
+export function findClipTrack(
+	tracks: Track[],
+	clipId: string,
+): { track: Track; clip: Clip } | null {
 	for (const track of tracks) {
 		const clip = track.clips.find((c) => c.id === clipId);
 		if (clip) return { track, clip };
@@ -250,6 +253,15 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 					state.selectedClipId && removedClipIds.includes(state.selectedClipId)
 						? null
 						: state.selectedClipId,
+			};
+		}
+
+		case "LOAD_PROJECT": {
+			return {
+				current: action.payload.project,
+				undoStack: [],
+				redoStack: [],
+				selectedClipId: null,
 			};
 		}
 

@@ -27,6 +27,13 @@ export interface MediaInfo {
 	height: number;
 }
 
+export interface ProjectFile {
+	version: number;
+	tracks: Track[];
+}
+
+export const PROJECT_FILE_VERSION = 1;
+
 export type ProjectAction =
 	| { type: "ADD_CLIP"; payload: { clip: Clip; trackId: string } }
 	| { type: "REMOVE_CLIP"; payload: { clipId: string } }
@@ -36,5 +43,6 @@ export type ProjectAction =
 	| { type: "SELECT_CLIP"; payload: { clipId: string | null } }
 	| { type: "ADD_TRACK" }
 	| { type: "REMOVE_TRACK"; payload: { trackId: string } }
+	| { type: "LOAD_PROJECT"; payload: { project: Project } }
 	| { type: "UNDO" }
 	| { type: "REDO" };
