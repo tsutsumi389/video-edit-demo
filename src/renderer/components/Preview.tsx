@@ -8,6 +8,7 @@ import { clamp } from "../utils/time";
 interface PreviewProps {
 	currentTime: number;
 	isPlaying: boolean;
+	playbackRate: number;
 }
 
 function findActiveClip(track: Track, currentTime: number): Clip | undefined {
@@ -112,7 +113,25 @@ function hasCrop(crop: ClipCrop): boolean {
 	return crop.top > 0 || crop.right > 0 || crop.bottom > 0 || crop.left > 0;
 }
 
-export function Preview({ currentTime, isPlaying }: PreviewProps) {
+function syncMediaPlayback(
+	el: HTMLMediaElement,
+	clipSpeed: number,
+	playbackRate: number,
+	isPlaying: boolean,
+): void {
+	const absRate = Math.abs(playbackRate);
+	const effectiveRate = clipSpeed * (absRate === 0 ? 1 : absRate);
+	if (el.playbackRate !== effectiveRate) el.playbackRate = effectiveRate;
+
+	const shouldPauseMedia = playbackRate <= 0;
+	if (isPlaying && !shouldPauseMedia && el.paused) {
+		el.play().catch(() => {});
+	} else if ((!isPlaying || shouldPauseMedia) && !el.paused) {
+		el.pause();
+	}
+}
+
+export function Preview({ currentTime, isPlaying, playbackRate }: PreviewProps) {
 	const { state } = useProject();
 	useProxyMap();
 	const videoRef = useRef<HTMLVideoElement>(null);
@@ -175,23 +194,15 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 			video.currentTime = clipLocalTime;
 		}
 
-		if (video.playbackRate !== clip.speed) video.playbackRate = clip.speed;
-
-		const desiredMuted = !videoTrackAudible || !clip.hasAudio;
+		const desiredMuted = !videoTrackAudible || !clip.hasAudio || playbackRate <= 0;
 		if (video.muted !== desiredMuted) video.muted = desiredMuted;
 		const fadeGain = computeFadeGain(clip, currentTime);
 		const transitionGain = transitionInfo?.outgoing ?? 1;
 		const desiredVolume = Math.min(1, track.volume * clip.volume * fadeGain * transitionGain);
 		if (video.volume !== desiredVolume) video.volume = desiredVolume;
 
-		if (isPlaying && video.paused) {
-			video.play().catch(() => {
-				/* ignore autoplay errors */
-			});
-		} else if (!isPlaying && !video.paused) {
-			video.pause();
-		}
-	}, [currentTime, isPlaying, activeMedia, videoTrackAudible, transitionInfo]);
+		syncMediaPlayback(video, clip.speed, playbackRate, isPlaying);
+	}, [currentTime, isPlaying, playbackRate, activeMedia, videoTrackAudible, transitionInfo]);
 
 	useEffect(() => {
 		const existing = audioRefs.current;
@@ -219,23 +230,15 @@ export function Preview({ currentTime, isPlaying }: PreviewProps) {
 				el.currentTime = localTime;
 			}
 
-			if (el.playbackRate !== activeClip.speed) el.playbackRate = activeClip.speed;
-
 			const desiredVolume = Math.min(
 				1,
 				track.volume * activeClip.volume * computeFadeGain(activeClip, currentTime),
 			);
 			if (el.volume !== desiredVolume) el.volume = desiredVolume;
 
-			if (isPlaying && el.paused) {
-				el.play().catch(() => {
-					/* ignore autoplay errors */
-				});
-			} else if (!isPlaying && !el.paused) {
-				el.pause();
-			}
+			syncMediaPlayback(el, activeClip.speed, playbackRate, isPlaying);
 		}
-	}, [audioTracks, currentTime, isPlaying, anySolo]);
+	}, [audioTracks, currentTime, isPlaying, playbackRate, anySolo]);
 
 	const hasAnyClips = useMemo(() => tracks.some((t) => t.clips.length > 0), [tracks]);
 

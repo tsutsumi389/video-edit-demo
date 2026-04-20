@@ -1,6 +1,7 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { findClipTrack, useProject } from "../hooks/useProject";
+import { nextShuttleRate } from "../hooks/useShuttle";
 import { clamp, formatTime } from "../utils/time";
 import { Track } from "./Track";
 
@@ -8,9 +9,11 @@ interface TimelineProps {
 	currentTime: number;
 	totalDuration: number;
 	isPlaying: boolean;
+	playbackRate: number;
 	onSeek: (time: number) => void;
 	onSetTotalDuration: (duration: number) => void;
 	onTogglePlayPause: () => void;
+	onSetPlaybackRate: (rate: number) => void;
 }
 
 const DEFAULT_PIXELS_PER_SECOND = 50;
@@ -24,9 +27,11 @@ export function Timeline({
 	currentTime,
 	totalDuration,
 	isPlaying,
+	playbackRate,
 	onSeek,
 	onSetTotalDuration,
 	onTogglePlayPause,
+	onSetPlaybackRate,
 }: TimelineProps) {
 	const { state, dispatch } = useProject();
 	const timelineRef = useRef<HTMLDivElement>(null);
@@ -141,8 +146,10 @@ export function Timeline({
 		totalDuration,
 		tracks,
 		isPlaying,
+		playbackRate,
 		onSeek,
 		onTogglePlayPause,
+		onSetPlaybackRate,
 	});
 	shortcutStateRef.current = {
 		selectedClipId: state.selectedClipId,
@@ -151,8 +158,10 @@ export function Timeline({
 		totalDuration,
 		tracks,
 		isPlaying,
+		playbackRate,
 		onSeek,
 		onTogglePlayPause,
+		onSetPlaybackRate,
 	};
 
 	useEffect(() => {
@@ -263,21 +272,18 @@ export function Timeline({
 				return;
 			}
 
-			if (key === "j") {
+			if (key === "l" || key === "j") {
 				e.preventDefault();
-				s.onSeek(Math.max(0, s.currentTime - 2));
+				const direction = key === "l" ? "forward" : "backward";
+				s.onSetPlaybackRate(nextShuttleRate(s.playbackRate, direction));
+				if (!s.isPlaying) s.onTogglePlayPause();
 				return;
 			}
 
 			if (key === "k") {
 				e.preventDefault();
+				s.onSetPlaybackRate(1);
 				if (s.isPlaying) s.onTogglePlayPause();
-				return;
-			}
-
-			if (key === "l") {
-				e.preventDefault();
-				if (!s.isPlaying) s.onTogglePlayPause();
 				return;
 			}
 
