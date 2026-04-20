@@ -5,6 +5,7 @@ export function usePlayback() {
 	const [currentTime, setCurrentTime] = useState(0);
 	const [isPlaying, setIsPlaying] = useState(false);
 	const [totalDuration, setTotalDuration] = useState(0);
+	const [playbackRate, setPlaybackRateState] = useState(1);
 	const animFrameRef = useRef<number>(0);
 	const lastTimeRef = useRef<number>(0);
 
@@ -35,6 +36,11 @@ export function usePlayback() {
 		[totalDuration],
 	);
 
+	const setPlaybackRate = useCallback((rate: number) => {
+		setPlaybackRateState(rate);
+		lastTimeRef.current = performance.now();
+	}, []);
+
 	useEffect(() => {
 		if (!isPlaying) return;
 
@@ -44,10 +50,14 @@ export function usePlayback() {
 			lastTimeRef.current = now;
 
 			setCurrentTime((prev) => {
-				const next = prev + delta;
+				const next = prev + delta * playbackRate;
 				if (next >= totalDuration) {
 					setIsPlaying(false);
 					return totalDuration;
+				}
+				if (next <= 0) {
+					setIsPlaying(false);
+					return 0;
 				}
 				return next;
 			});
@@ -63,13 +73,15 @@ export function usePlayback() {
 				cancelAnimationFrame(animFrameRef.current);
 			}
 		};
-	}, [isPlaying, totalDuration]);
+	}, [isPlaying, totalDuration, playbackRate]);
 
 	return {
 		currentTime,
 		isPlaying,
 		totalDuration,
+		playbackRate,
 		setTotalDuration,
+		setPlaybackRate,
 		play,
 		pause,
 		togglePlayPause,

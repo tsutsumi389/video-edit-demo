@@ -7,6 +7,7 @@ interface ToolbarProps {
 	isPlaying: boolean;
 	currentTime: number;
 	totalDuration: number;
+	playbackRate: number;
 	onTogglePlayPause: () => void;
 	onImport: () => void;
 	onExport: () => void;
@@ -30,6 +31,7 @@ export function Toolbar({
 	isPlaying,
 	currentTime,
 	totalDuration,
+	playbackRate,
 	onTogglePlayPause,
 	onImport,
 	onExport,
@@ -235,6 +237,11 @@ export function Toolbar({
 				>
 					{isPlaying ? "Pause" : "Play"}
 				</button>
+				{isPlaying && playbackRate !== 1 && (
+					<span className="shuttle-indicator" title="J/K/L でシャトル再生中">
+						{`×${playbackRate}`}
+					</span>
+				)}
 				<button
 					type="button"
 					className="toolbar-btn"

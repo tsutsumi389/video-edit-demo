@@ -709,6 +709,7 @@ function AppInner() {
 					isPlaying={playback.isPlaying}
 					currentTime={playback.currentTime}
 					totalDuration={playback.totalDuration}
+					playbackRate={playback.playbackRate}
 					onTogglePlayPause={playback.togglePlayPause}
 					onImport={handleImport}
 					onExport={handleExportRequest}
@@ -735,7 +736,11 @@ function AppInner() {
 							onClose={() => setMediaBinOpen(false)}
 						/>
 					)}
-					<Preview currentTime={playback.currentTime} isPlaying={playback.isPlaying} />
+					<Preview
+						currentTime={playback.currentTime}
+						isPlaying={playback.isPlaying}
+						playbackRate={playback.playbackRate}
+					/>
 					<PropertiesPanel
 						selectedClip={selectedClip}
 						transitions={transitions}
@@ -746,9 +751,11 @@ function AppInner() {
 					currentTime={playback.currentTime}
 					totalDuration={playback.totalDuration}
 					isPlaying={playback.isPlaying}
+					playbackRate={playback.playbackRate}
 					onSeek={playback.seek}
 					onSetTotalDuration={playback.setTotalDuration}
 					onTogglePlayPause={playback.togglePlayPause}
+					onSetPlaybackRate={playback.setPlaybackRate}
 				/>
 				<ExportDialog
 					open={exportDialogOpen}

@@ -79,6 +79,18 @@ body {
 	background: #c73e54;
 }
 
+.shuttle-indicator {
+	padding: 2px 8px;
+	margin-left: 4px;
+	background: #2a2a40;
+	border: 1px solid #e94560;
+	border-radius: 3px;
+	color: #e94560;
+	font-family: ui-monospace, Menlo, monospace;
+	font-size: 12px;
+	font-weight: bold;
+}
+
 /* Menu Bar */
 .menu-bar {
 	display: flex;
