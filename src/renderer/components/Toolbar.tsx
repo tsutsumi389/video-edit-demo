@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useProject } from "../hooks/useProject";
+import {
+	setPlaybackProxyEnabled,
+	usePlaybackProxyEnabled,
+	useProxyMap,
+} from "../hooks/useProxyMap";
 import { type TextStyle, TITLE_TEMPLATES } from "../types/project";
 import { formatTime } from "../utils/time";
 
@@ -54,6 +59,9 @@ export function Toolbar({
 	const [menuOpen, setMenuOpen] = useState<string | null>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const textMenuRef = useRef<HTMLDivElement>(null);
+	const playbackProxyEnabled = usePlaybackProxyEnabled();
+	const proxyMap = useProxyMap();
+	const hasAnyProxy = proxyMap.size > 0;
 
 	useEffect(() => {
 		if (menuOpen === null) return;
@@ -330,6 +338,20 @@ export function Toolbar({
 			</div>
 
 			<div className="toolbar-right">
+				<label
+					className="toolbar-toggle"
+					title={
+						hasAnyProxy ? "プレビューでプロキシを使用するか切替" : "プロキシが生成されていません"
+					}
+				>
+					<input
+						type="checkbox"
+						checked={playbackProxyEnabled && hasAnyProxy}
+						disabled={!hasAnyProxy}
+						onChange={(e) => setPlaybackProxyEnabled(e.target.checked)}
+					/>
+					<span>プレビュー: プロキシ</span>
+				</label>
 				{exportProgress !== null && (
 					<div className="progress-bar">
 						<div className="progress-fill" style={{ width: `${exportProgress}%` }} />

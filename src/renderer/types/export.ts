@@ -31,6 +31,7 @@ export interface ExportSettings {
 	codec: ExportCodec;
 	container: ExportContainer;
 	range: ExportRange | null;
+	useProxy: boolean;
 }
 
 export interface ExportPreset {
@@ -141,6 +142,7 @@ export function presetToSettings(preset: ExportPreset): ExportSettings {
 		codec: preset.codec,
 		container: preset.container,
 		range: null,
+		useProxy: false,
 	};
 }
 

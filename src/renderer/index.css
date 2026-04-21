@@ -91,6 +91,30 @@ body {
 	font-weight: bold;
 }
 
+.toolbar-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	background: #16213e;
+	border: 1px solid #0f3460;
+	border-radius: 4px;
+	color: #e0e0e0;
+	font-size: 12px;
+	cursor: pointer;
+	user-select: none;
+}
+
+.toolbar-toggle input[type="checkbox"] {
+	margin: 0;
+	cursor: pointer;
+}
+
+.toolbar-toggle:has(input:disabled) {
+	opacity: 0.4;
+	cursor: default;
+}
+
 /* Menu Bar */
 .menu-bar {
 	display: flex;

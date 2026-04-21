@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useProject } from "../hooks/useProject";
-import { resolvePlaybackUrl, useProxyMap } from "../hooks/useProxyMap";
+import {
+	resolvePlaybackUrl,
+	toPlaybackUrl,
+	usePlaybackProxyEnabled,
+	useProxyMap,
+} from "../hooks/useProxyMap";
 import type { Clip, ClipCrop, ClipTransform, Track, Transition } from "../types/project";
 import { interpolateKeyframes } from "../utils/keyframes";
 import { clamp } from "../utils/time";
@@ -133,7 +138,8 @@ function syncMediaPlayback(
 
 export function Preview({ currentTime, isPlaying, playbackRate }: PreviewProps) {
 	const { state } = useProject();
-	useProxyMap();
+	const proxyMap = useProxyMap();
+	const playbackProxyEnabled = usePlaybackProxyEnabled();
 	const videoRef = useRef<HTMLVideoElement>(null);
 	const lastSrcRef = useRef<string>("");
 	const audioRefs = useRef<Map<string, HTMLAudioElement>>(new Map());
@@ -185,7 +191,7 @@ export function Preview({ currentTime, isPlaying, playbackRate }: PreviewProps) 
 		const localPos = currentTime - clip.trackPosition;
 		const clipLocalTime = clip.inPoint + localPos * clip.speed;
 
-		const desiredUrl = resolvePlaybackUrl(clip.sourceFile);
+		const desiredUrl = toPlaybackUrl(clip.sourceFile, proxyMap, playbackProxyEnabled);
 		if (lastSrcRef.current !== desiredUrl) {
 			video.src = desiredUrl;
 			lastSrcRef.current = desiredUrl;
@@ -202,7 +208,16 @@ export function Preview({ currentTime, isPlaying, playbackRate }: PreviewProps) 
 		if (video.volume !== desiredVolume) video.volume = desiredVolume;
 
 		syncMediaPlayback(video, clip.speed, playbackRate, isPlaying);
-	}, [currentTime, isPlaying, playbackRate, activeMedia, videoTrackAudible, transitionInfo]);
+	}, [
+		currentTime,
+		isPlaying,
+		playbackRate,
+		activeMedia,
+		videoTrackAudible,
+		transitionInfo,
+		proxyMap,
+		playbackProxyEnabled,
+	]);
 
 	useEffect(() => {
 		const existing = audioRefs.current;
@@ -221,7 +236,7 @@ export function Preview({ currentTime, isPlaying, playbackRate }: PreviewProps) 
 			const localPos = currentTime - activeClip.trackPosition;
 			const localTime = activeClip.inPoint + localPos * activeClip.speed;
 
-			const desiredAudioUrl = resolvePlaybackUrl(activeClip.sourceFile);
+			const desiredAudioUrl = toPlaybackUrl(activeClip.sourceFile, proxyMap, playbackProxyEnabled);
 			if (lastAudioSrcRef.current.get(track.id) !== desiredAudioUrl) {
 				el.src = desiredAudioUrl;
 				lastAudioSrcRef.current.set(track.id, desiredAudioUrl);
@@ -238,7 +253,7 @@ export function Preview({ currentTime, isPlaying, playbackRate }: PreviewProps) 
 
 			syncMediaPlayback(el, activeClip.speed, playbackRate, isPlaying);
 		}
-	}, [audioTracks, currentTime, isPlaying, playbackRate, anySolo]);
+	}, [audioTracks, currentTime, isPlaying, playbackRate, anySolo, proxyMap, playbackProxyEnabled]);
 
 	const hasAnyClips = useMemo(() => tracks.some((t) => t.clips.length > 0), [tracks]);
 

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useProject } from "../hooks/useProject";
+import { getProxyPath } from "../hooks/useProxyMap";
 import {
 	CODEC_CONTAINERS,
 	CODEC_OPTIONS,
@@ -49,6 +51,7 @@ export function ExportDialog({
 		setSettings((prev) => ({
 			...presetToSettings(preset),
 			range: prev.range,
+			useProxy: prev.useProxy,
 		}));
 	}, []);
 
@@ -88,6 +91,28 @@ export function ExportDialog({
 	const useRange = settings.range !== null;
 	const rangeStart = settings.range?.start ?? 0;
 	const rangeEnd = settings.range?.end ?? totalDuration;
+
+	const { state } = useProject();
+	const proxyAvailability = useMemo(() => {
+		const mediaClipPaths = new Set<string>();
+		for (const t of state.current.tracks) {
+			for (const c of t.clips) {
+				if (c.kind === "media" && (c.hasVideo || c.hasAudio)) {
+					mediaClipPaths.add(c.sourceFile);
+				}
+			}
+		}
+		const total = mediaClipPaths.size;
+		let withProxy = 0;
+		for (const p of mediaClipPaths) {
+			if (getProxyPath(p) !== null) withProxy++;
+		}
+		return { total, withProxy, missing: total - withProxy };
+	}, [state.current.tracks]);
+
+	const setUseProxy = useCallback((enabled: boolean) => {
+		setSettings((prev) => ({ ...prev, useProxy: enabled }));
+	}, []);
 
 	const rangeError = useMemo(() => {
 		if (!useRange) return null;
@@ -306,6 +331,29 @@ export function ExportDialog({
 						</div>
 					)}
 					{rangeError && <div className="modal-error">{rangeError}</div>}
+				</div>
+
+				<div className="modal-section">
+					<label className="modal-checkbox">
+						<input
+							type="checkbox"
+							checked={settings.useProxy}
+							onChange={(e) => setUseProxy(e.target.checked)}
+							disabled={proxyAvailability.withProxy === 0}
+						/>
+						<span>プロキシを使用（ドラフト・高速エクスポート）</span>
+					</label>
+					{proxyAvailability.total > 0 && proxyAvailability.withProxy === 0 && (
+						<div className="modal-hint">
+							プロキシが生成されたクリップがありません。環境設定でプロキシを有効にしてから再インポートしてください。
+						</div>
+					)}
+					{settings.useProxy && proxyAvailability.missing > 0 && (
+						<div className="modal-hint">
+							{proxyAvailability.missing}{" "}
+							件のクリップにプロキシがありません。これらはオリジナルにフォールバックしてエクスポートされます。
+						</div>
+					)}
 				</div>
 
 				<div className="modal-actions">

@@ -16,7 +16,7 @@ import {
 	ProjectContext,
 	useProjectReducer,
 } from "./hooks/useProject";
-import { clearProxyMap, setProxy } from "./hooks/useProxyMap";
+import { clearProxyMap, resolveExportSourceFile, setProxy } from "./hooks/useProxyMap";
 import { useToast } from "./hooks/useToast";
 import { DEFAULT_EXPORT_SETTINGS, type ExportRange, type ExportSettings } from "./types/export";
 import {
@@ -80,8 +80,12 @@ function buildExportPayload(
 	totalDuration: number,
 	settings: ExportSettings,
 ) {
+	const useProxy = settings.useProxy;
 	const videoTracks = tracks.filter((t) => t.kind === "video");
-	const videoEdl = flattenTracks(videoTracks);
+	const videoEdl = flattenTracks(videoTracks).map((entry) => ({
+		...entry,
+		sourceFile: resolveExportSourceFile(entry.sourceFile, useProxy),
+	}));
 	const audioTracks = tracks.map((t) => ({
 		id: t.id,
 		kind: t.kind,
@@ -91,7 +95,7 @@ function buildExportPayload(
 		clips: t.clips
 			.filter((c) => c.kind === "media")
 			.map((c) => ({
-				sourceFile: c.sourceFile,
+				sourceFile: resolveExportSourceFile(c.sourceFile, useProxy),
 				inPoint: c.inPoint,
 				outPoint: c.outPoint,
 				trackPosition: c.trackPosition,
@@ -120,7 +124,7 @@ function buildExportPayload(
 					text: c.text,
 				})),
 		);
-	const { range: _range, ...mainSettings } = settings;
+	const { range: _range, useProxy: _useProxy, ...mainSettings } = settings;
 	return { videoEdl, audioTracks, overlays, transitions, totalDuration, settings: mainSettings };
 }
 
