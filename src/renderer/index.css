@@ -868,6 +868,23 @@ body {
 	z-index: 10;
 }
 
+.snap-guide {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 1px;
+	background: #ffcc00;
+	pointer-events: none;
+	z-index: 15;
+	box-shadow: 0 0 4px rgba(255, 204, 0, 0.7);
+}
+
+.toolbar-btn[aria-pressed="true"] {
+	background: #3a5a9c;
+	color: #fff;
+	border-color: #3a5a9c;
+}
+
 /* Add Track Button */
 .add-track-row {
 	display: flex;

@@ -8,6 +8,7 @@ import type {
 	TrackKind,
 	Track as TrackType,
 } from "../types/project";
+import { buildSnapCandidates, snapToCandidates } from "../utils/snap";
 import { clamp } from "../utils/time";
 import { Waveform } from "./Waveform";
 
@@ -21,22 +22,13 @@ interface ClipProps {
 	allTracks: TrackType[];
 	markers: Marker[];
 	snapThresholdPx: number;
+	snapEnabled: boolean;
+	rippleEnabled: boolean;
+	totalDuration: number;
+	onSnapHighlight: (time: number | null) => void;
 }
 
 type DragMode = "move" | "trim-left" | "trim-right" | "fade-in" | "fade-out";
-
-function snapToCandidates(value: number, candidates: number[], thresholdSec: number): number {
-	let best = value;
-	let bestDist = thresholdSec;
-	for (const c of candidates) {
-		const d = Math.abs(c - value);
-		if (d < bestDist) {
-			bestDist = d;
-			best = c;
-		}
-	}
-	return best;
-}
 
 export function Clip({
 	clip,
@@ -48,6 +40,10 @@ export function Clip({
 	allTracks,
 	markers,
 	snapThresholdPx,
+	snapEnabled,
+	rippleEnabled,
+	totalDuration,
+	onSnapHighlight,
 }: ClipProps) {
 	const { dispatch } = useProject();
 	const dragRef = useRef<{
@@ -86,25 +82,24 @@ export function Clip({
 				mode,
 			};
 			const trackElements = document.querySelectorAll("[data-track-id]");
-			const snapCandidates = (() => {
-				const set = new Set<number>([currentTime, 0]);
-				for (const t of allTracks) {
-					for (const c of t.clips) {
-						if (c.id === clip.id) continue;
-						set.add(c.trackPosition);
-						set.add(c.trackPosition + (c.outPoint - c.inPoint));
-					}
-				}
-				for (const m of markers) set.add(m.time);
-				const base = Math.floor(clip.trackPosition);
-				for (let i = -5; i <= 20; i++) set.add(base + i);
-				return [...set].filter((n) => n >= 0);
-			})();
+			const snapCandidates = buildSnapCandidates({
+				tracks: allTracks,
+				markers,
+				currentTime,
+				totalDuration,
+				excludeClipId: clip.id,
+			});
 
 			const handleMouseMove = (ev: MouseEvent) => {
 				if (!dragRef.current) return;
 				const dx = ev.clientX - dragRef.current.startX;
 				const dtSeconds = dx / pixelsPerSecond;
+				const useSnap = snapEnabled && !ev.metaKey && !ev.ctrlKey;
+				const useRipple = rippleEnabled !== ev.shiftKey;
+				const trySnap = (value: number) =>
+					useSnap
+						? snapToCandidates(value, snapCandidates, thresholdSec)
+						: { value, snappedTo: null };
 
 				if (dragRef.current.mode === "move") {
 					let targetTrackId = trackId;
@@ -118,11 +113,14 @@ export function Clip({
 
 					const rawPos = dragRef.current.startPos + dtSeconds;
 					const rawEnd = rawPos + clipDuration;
-					const snappedStart = snapToCandidates(rawPos, snapCandidates, thresholdSec);
-					const snappedEnd = snapToCandidates(rawEnd, snapCandidates, thresholdSec);
-					const startDist = Math.abs(snappedStart - rawPos);
-					const endDist = Math.abs(snappedEnd - rawEnd);
-					const finalPos = startDist <= endDist ? snappedStart : snappedEnd - clipDuration;
+					const snappedStartRes = trySnap(rawPos);
+					const snappedEndRes = trySnap(rawEnd);
+					const startDist = Math.abs(snappedStartRes.value - rawPos);
+					const endDist = Math.abs(snappedEndRes.value - rawEnd);
+					const useStart = startDist <= endDist;
+					const finalPos = useStart ? snappedStartRes.value : snappedEndRes.value - clipDuration;
+					const snappedTime = useStart ? snappedStartRes.snappedTo : snappedEndRes.snappedTo;
+					onSnapHighlight(snappedTime);
 
 					dispatch({
 						type: "MOVE_CLIP",
@@ -130,28 +128,31 @@ export function Clip({
 							clipId: clip.id,
 							trackPosition: finalPos,
 							trackId: targetTrackId,
+							ripple: useRipple,
 						},
 					});
 				} else if (dragRef.current.mode === "trim-left") {
 					const rawStartOnTimeline = clip.trackPosition + dtSeconds;
-					const snappedStart = snapToCandidates(rawStartOnTimeline, snapCandidates, thresholdSec);
-					const adjustedDt = snappedStart - clip.trackPosition;
+					const snapRes = trySnap(rawStartOnTimeline);
+					onSnapHighlight(snapRes.snappedTo);
+					const adjustedDt = snapRes.value - clip.trackPosition;
 					const newIn = clamp(clip.inPoint + adjustedDt, 0, clip.outPoint - 0.1);
 					if (newIn < clip.outPoint - 0.1) {
 						dispatch({
 							type: "TRIM_CLIP",
-							payload: { clipId: clip.id, inPoint: newIn },
+							payload: { clipId: clip.id, inPoint: newIn, ripple: useRipple },
 						});
 					}
 				} else if (dragRef.current.mode === "trim-right") {
 					const rawEndOnTimeline = clip.trackPosition + clipDuration + dtSeconds;
-					const snappedEnd = snapToCandidates(rawEndOnTimeline, snapCandidates, thresholdSec);
-					const adjustedDt = snappedEnd - (clip.trackPosition + clipDuration);
+					const snapRes = trySnap(rawEndOnTimeline);
+					onSnapHighlight(snapRes.snappedTo);
+					const adjustedDt = snapRes.value - (clip.trackPosition + clipDuration);
 					const newOut = clamp(clip.outPoint + adjustedDt, clip.inPoint + 0.1, clip.duration);
 					if (newOut > clip.inPoint + 0.1) {
 						dispatch({
 							type: "TRIM_CLIP",
-							payload: { clipId: clip.id, outPoint: newOut },
+							payload: { clipId: clip.id, outPoint: newOut, ripple: useRipple },
 						});
 					}
 				} else if (dragRef.current.mode === "fade-in") {
@@ -165,6 +166,7 @@ export function Clip({
 
 			const handleMouseUp = () => {
 				dragRef.current = null;
+				onSnapHighlight(null);
 				window.removeEventListener("mousemove", handleMouseMove);
 				window.removeEventListener("mouseup", handleMouseUp);
 			};
@@ -182,6 +184,10 @@ export function Clip({
 			currentTime,
 			clipDuration,
 			thresholdSec,
+			snapEnabled,
+			rippleEnabled,
+			totalDuration,
+			onSnapHighlight,
 		],
 	);
 
