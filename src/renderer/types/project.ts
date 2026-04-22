@@ -201,9 +201,25 @@ export type ProjectAction =
 	| { type: "ADD_CLIP"; payload: { clip: Clip; trackId: string } }
 	| { type: "REMOVE_CLIP"; payload: { clipId: string } }
 	| { type: "RIPPLE_DELETE_CLIP"; payload: { clipId: string } }
-	| { type: "TRIM_CLIP"; payload: { clipId: string; inPoint?: number; outPoint?: number } }
+	| {
+			type: "TRIM_CLIP";
+			payload: {
+				clipId: string;
+				inPoint?: number;
+				outPoint?: number;
+				ripple?: boolean;
+			};
+	  }
 	| { type: "SPLIT_CLIP"; payload: { clipId: string; splitTime: number } }
-	| { type: "MOVE_CLIP"; payload: { clipId: string; trackPosition: number; trackId: string } }
+	| {
+			type: "MOVE_CLIP";
+			payload: {
+				clipId: string;
+				trackPosition: number;
+				trackId: string;
+				ripple?: boolean;
+			};
+	  }
 	| { type: "SELECT_CLIP"; payload: { clipId: string | null } }
 	| { type: "COPY_CLIP"; payload: { clipId: string } }
 	| {

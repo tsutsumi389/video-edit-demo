@@ -14,6 +14,10 @@ interface TrackProps {
 	markers: Marker[];
 	snapThresholdPx: number;
 	transitions: Transition[];
+	snapEnabled: boolean;
+	rippleEnabled: boolean;
+	totalDuration: number;
+	onSnapHighlight: (time: number | null) => void;
 }
 
 export function Track({
@@ -27,6 +31,10 @@ export function Track({
 	markers,
 	snapThresholdPx,
 	transitions,
+	snapEnabled,
+	rippleEnabled,
+	totalDuration,
+	onSnapHighlight,
 }: TrackProps) {
 	const { dispatch } = useProject();
 	const label = track.kind === "audio" ? `A${audioIndex + 1}` : `V${videoIndex + 1}`;
@@ -100,6 +108,10 @@ export function Track({
 						allTracks={allTracks}
 						markers={markers}
 						snapThresholdPx={snapThresholdPx}
+						snapEnabled={snapEnabled}
+						rippleEnabled={rippleEnabled}
+						totalDuration={totalDuration}
+						onSnapHighlight={onSnapHighlight}
 					/>
 				))}
 				{transitions.map((tr) => {

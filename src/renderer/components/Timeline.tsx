@@ -14,6 +14,10 @@ interface TimelineProps {
 	onSetTotalDuration: (duration: number) => void;
 	onTogglePlayPause: () => void;
 	onSetPlaybackRate: (rate: number) => void;
+	snapEnabled: boolean;
+	rippleEnabled: boolean;
+	onToggleSnap: () => void;
+	onToggleRipple: () => void;
 }
 
 const DEFAULT_PIXELS_PER_SECOND = 50;
@@ -32,10 +36,18 @@ export function Timeline({
 	onSetTotalDuration,
 	onTogglePlayPause,
 	onSetPlaybackRate,
+	snapEnabled,
+	rippleEnabled,
+	onToggleSnap,
+	onToggleRipple,
 }: TimelineProps) {
 	const { state, dispatch } = useProject();
 	const timelineRef = useRef<HTMLDivElement>(null);
 	const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_PIXELS_PER_SECOND);
+	const [activeSnapTime, setActiveSnapTime] = useState<number | null>(null);
+	const onSnapHighlight = useCallback((time: number | null) => {
+		setActiveSnapTime((prev) => (prev === time ? prev : time));
+	}, []);
 
 	const tracks = state.current.tracks;
 	const markers = state.current.markers;
@@ -150,6 +162,8 @@ export function Timeline({
 		onSeek,
 		onTogglePlayPause,
 		onSetPlaybackRate,
+		onToggleSnap,
+		onToggleRipple,
 	});
 	shortcutStateRef.current = {
 		selectedClipId: state.selectedClipId,
@@ -162,6 +176,8 @@ export function Timeline({
 		onSeek,
 		onTogglePlayPause,
 		onSetPlaybackRate,
+		onToggleSnap,
+		onToggleRipple,
 	};
 
 	useEffect(() => {
@@ -272,6 +288,18 @@ export function Timeline({
 				return;
 			}
 
+			if (key === "n") {
+				e.preventDefault();
+				s.onToggleSnap();
+				return;
+			}
+
+			if (key === "b") {
+				e.preventDefault();
+				s.onToggleRipple();
+				return;
+			}
+
 			if (key === "l" || key === "j") {
 				e.preventDefault();
 				const direction = key === "l" ? "forward" : "backward";
@@ -368,7 +396,9 @@ export function Timeline({
 				<button type="button" className="zoom-btn" onClick={handleZoomIn} title="拡大">
 					+
 				</button>
-				<span className="timeline-hint">Ctrl+ホイールでズーム / M でマーカー</span>
+				<span className="timeline-hint">
+					Ctrl+ホイールでズーム / M でマーカー / N でスナップ / B でリップル
+				</span>
 			</div>
 			<div className="timeline" ref={timelineRef}>
 				<div className="timeline-content" style={{ width: `${timelineWidth}px` }}>
@@ -423,6 +453,10 @@ export function Timeline({
 										markers={markers}
 										snapThresholdPx={SNAP_THRESHOLD_PX}
 										transitions={transitionsByTrackId.get(track.id) ?? []}
+										snapEnabled={snapEnabled}
+										rippleEnabled={rippleEnabled}
+										totalDuration={totalDuration}
+										onSnapHighlight={onSnapHighlight}
 									/>
 								);
 							});
@@ -449,6 +483,9 @@ export function Timeline({
 
 					{/* Playhead */}
 					<div className="playhead" style={{ left: `${playheadLeft}px` }} />
+					{activeSnapTime !== null && (
+						<div className="snap-guide" style={{ left: `${activeSnapTime * pixelsPerSecond}px` }} />
+					)}
 				</div>
 			</div>
 		</div>

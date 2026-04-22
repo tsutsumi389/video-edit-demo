@@ -30,6 +30,10 @@ interface ToolbarProps {
 	mediaBinOpen: boolean;
 	projectFilePath: string | null;
 	exportProgress: number | null;
+	snapEnabled: boolean;
+	rippleEnabled: boolean;
+	onToggleSnap: () => void;
+	onToggleRipple: () => void;
 }
 
 export function Toolbar({
@@ -54,6 +58,10 @@ export function Toolbar({
 	mediaBinOpen,
 	projectFilePath,
 	exportProgress,
+	snapEnabled,
+	rippleEnabled,
+	onToggleSnap,
+	onToggleRipple,
 }: ToolbarProps) {
 	const { state, dispatch } = useProject();
 	const [menuOpen, setMenuOpen] = useState<string | null>(null);
@@ -267,6 +275,24 @@ export function Toolbar({
 					title="選択クリップを削除 (Delete)"
 				>
 					削除
+				</button>
+				<button
+					type="button"
+					className="toolbar-btn"
+					aria-pressed={snapEnabled}
+					onClick={onToggleSnap}
+					title="スナップ ON/OFF (N) — ドラッグ中は Cmd/Ctrl で一時無効化"
+				>
+					スナップ
+				</button>
+				<button
+					type="button"
+					className="toolbar-btn"
+					aria-pressed={rippleEnabled}
+					onClick={onToggleRipple}
+					title="リップル編集 ON/OFF (B) — ドラッグ中は Shift で反転"
+				>
+					リップル
 				</button>
 				<button
 					type="button"

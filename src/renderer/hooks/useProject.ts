@@ -234,18 +234,40 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 		}
 
 		case "TRIM_CLIP": {
-			const { clipId, inPoint, outPoint } = action.payload;
-			const newTracks = updateClipById(withUndo.current.tracks, clipId, (c) => {
-				const newIn = inPoint ?? c.inPoint;
-				const newOut = outPoint ?? c.outPoint;
-				const { in: fIn, out: fOut } = clampFadeBounds(
-					{ ...c, inPoint: newIn, outPoint: newOut },
-					c.fadeIn,
-					c.fadeOut,
-				);
-				return { ...c, inPoint: newIn, outPoint: newOut, fadeIn: fIn, fadeOut: fOut };
+			const { clipId, inPoint, outPoint, ripple } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found) return state;
+			const oldClip = found.clip;
+			const oldDuration = oldClip.outPoint - oldClip.inPoint;
+			const oldEnd = oldClip.trackPosition + oldDuration;
+			const newIn = inPoint ?? oldClip.inPoint;
+			const newOut = outPoint ?? oldClip.outPoint;
+			const { in: fIn, out: fOut } = clampFadeBounds(
+				{ ...oldClip, inPoint: newIn, outPoint: newOut },
+				oldClip.fadeIn,
+				oldClip.fadeOut,
+			);
+			if (
+				newIn === oldClip.inPoint &&
+				newOut === oldClip.outPoint &&
+				fIn === oldClip.fadeIn &&
+				fOut === oldClip.fadeOut
+			) {
+				return state;
+			}
+			const trimmedClip: Clip = {
+				...oldClip,
+				inPoint: newIn,
+				outPoint: newOut,
+				fadeIn: fIn,
+				fadeOut: fOut,
+			};
+			const delta = newOut - newIn - oldDuration;
+			const newTracks = updateTrackById(withUndo.current.tracks, found.track.id, (t) => {
+				const replaced = t.clips.map((c) => (c.id === clipId ? trimmedClip : c));
+				if (!ripple || delta === 0) return { ...t, clips: replaced };
+				return { ...t, clips: rippleShift(replaced, oldEnd, delta, clipId) };
 			});
-			if (!newTracks) return state;
 			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
 		}
 
@@ -303,7 +325,7 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 		}
 
 		case "MOVE_CLIP": {
-			const { clipId, trackPosition, trackId: targetTrackId } = action.payload;
+			const { clipId, trackPosition, trackId: targetTrackId, ripple } = action.payload;
 			const found = findClipTrack(withUndo.current.tracks, clipId);
 			if (!found) return state;
 
@@ -319,12 +341,31 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 				return state;
 
 			if (sourceTrackId === targetTrackId) {
+				if (ripple) {
+					const oldStart = movingClip.trackPosition;
+					const newStart = Math.max(0, trackPosition);
+					if (newStart === oldStart) return state;
+					const others = found.track.clips.filter((c) => c.id !== clipId);
+					const shrunk = rippleShift(others, oldStart, -movingDuration);
+					const inserted = rippleShift(shrunk, newStart, movingDuration);
+					return {
+						...withUndo,
+						current: {
+							...withUndo.current,
+							tracks: updateTrackById(withUndo.current.tracks, sourceTrackId, (t) => ({
+								...t,
+								clips: [...inserted, { ...movingClip, trackPosition: newStart }],
+							})),
+						},
+					};
+				}
 				const clamped = clampToTrackBounds(
 					found.track.clips,
 					clipId,
 					movingDuration,
 					trackPosition,
 				);
+				if (clamped === movingClip.trackPosition) return state;
 				return {
 					...withUndo,
 					current: {

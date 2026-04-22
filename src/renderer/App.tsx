@@ -175,6 +175,10 @@ function AppInner() {
 		data: string;
 	} | null>(null);
 	const [mediaBinOpen, setMediaBinOpen] = useState(true);
+	const [snapEnabled, setSnapEnabled] = useState(true);
+	const [rippleEnabled, setRippleEnabled] = useState(false);
+	const handleToggleSnap = useCallback(() => setSnapEnabled((v) => !v), []);
+	const handleToggleRipple = useCallback(() => setRippleEnabled((v) => !v), []);
 
 	const tracks = project.state.current.tracks;
 	const transitions = project.state.current.transitions;
@@ -731,6 +735,10 @@ function AppInner() {
 					mediaBinOpen={mediaBinOpen}
 					projectFilePath={projectFilePath}
 					exportProgress={exportProgress}
+					snapEnabled={snapEnabled}
+					rippleEnabled={rippleEnabled}
+					onToggleSnap={handleToggleSnap}
+					onToggleRipple={handleToggleRipple}
 				/>
 				<div className="main-area">
 					{mediaBinOpen && (
@@ -760,6 +768,10 @@ function AppInner() {
 					onSetTotalDuration={playback.setTotalDuration}
 					onTogglePlayPause={playback.togglePlayPause}
 					onSetPlaybackRate={playback.setPlaybackRate}
+					snapEnabled={snapEnabled}
+					rippleEnabled={rippleEnabled}
+					onToggleSnap={handleToggleSnap}
+					onToggleRipple={handleToggleRipple}
 				/>
 				<ExportDialog
 					open={exportDialogOpen}
