@@ -2,9 +2,11 @@ import type React from "react";
 import { useProject } from "../hooks/useProject";
 import {
 	type Clip,
+	type ClipChromaKey,
 	type ClipCrop,
 	type ClipFilter,
 	type ClipTransform,
+	DEFAULT_CHROMAKEY,
 	KEYFRAME_SCALE_MAX,
 	KEYFRAME_SCALE_MIN,
 	type Keyframe,
@@ -62,6 +64,10 @@ export function PropertiesPanel({ selectedClip, transitions, currentTime }: Prop
 
 	const updateText = (partial: Partial<TextStyle>) => {
 		dispatch({ type: "SET_CLIP_TEXT", payload: { clipId: clip.id, text: partial } });
+	};
+
+	const updateChromaKey = (next: ClipChromaKey | null) => {
+		dispatch({ type: "SET_CLIP_CHROMAKEY", payload: { clipId: clip.id, chromaKey: next } });
 	};
 
 	const setSpeed = (speed: number) => {
@@ -190,6 +196,10 @@ export function PropertiesPanel({ selectedClip, transitions, currentTime }: Prop
 						))}
 					</div>
 				</Section>
+			)}
+
+			{(isMedia || isImage) && (
+				<ChromaKeySection chromaKey={clip.chromaKey} onChange={updateChromaKey} />
 			)}
 
 			{clip.kind === "media" && clip.hasVideo && (
@@ -441,6 +451,60 @@ function TransitionSection({
 				</button>
 			)}
 			{transitionIn && <div className="property-hint">前クリップからのトランジションあり</div>}
+		</Section>
+	);
+}
+
+function ChromaKeySection({
+	chromaKey,
+	onChange,
+}: {
+	chromaKey: ClipChromaKey | null;
+	onChange: (next: ClipChromaKey | null) => void;
+}) {
+	const enabled = chromaKey !== null;
+	const current = chromaKey ?? DEFAULT_CHROMAKEY;
+
+	return (
+		<Section title="クロマキー">
+			<label className="property-row property-row-inline">
+				<span className="property-label">有効</span>
+				<input
+					type="checkbox"
+					checked={enabled}
+					onChange={(e) => onChange(e.target.checked ? { ...DEFAULT_CHROMAKEY } : null)}
+				/>
+			</label>
+			{enabled && (
+				<>
+					<label className="property-row property-row-inline">
+						<span className="property-label">キー色</span>
+						<input
+							type="color"
+							value={current.color}
+							onChange={(e) => onChange({ ...current, color: e.target.value })}
+							className="property-color"
+						/>
+					</label>
+					<Slider
+						label={`類似度 ${current.similarity.toFixed(2)}`}
+						min={0}
+						max={1}
+						step={0.01}
+						value={current.similarity}
+						onChange={(v) => onChange({ ...current, similarity: v })}
+					/>
+					<Slider
+						label={`ブレンド ${current.blend.toFixed(2)}`}
+						min={0}
+						max={1}
+						step={0.01}
+						value={current.blend}
+						onChange={(v) => onChange({ ...current, blend: v })}
+					/>
+					<div className="property-hint">プレビューでは未反映。エクスポート時に適用されます。</div>
+				</>
+			)}
 		</Section>
 	);
 }

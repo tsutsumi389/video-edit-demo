@@ -108,6 +108,12 @@ export interface ExportTransition {
 	kind: "crossfade" | "fade-to-black";
 }
 
+export interface ExportChromaKey {
+	color: string;
+	similarity: number;
+	blend: number;
+}
+
 export interface ExportVideoSegment {
 	sourceFile: string;
 	inPoint: number;
@@ -116,6 +122,7 @@ export interface ExportVideoSegment {
 	filter: { brightness: number; contrast: number; saturation: number };
 	transform: { scale: number; offsetX: number; offsetY: number };
 	crop: { top: number; right: number; bottom: number; left: number };
+	chromaKey: ExportChromaKey | null;
 }
 
 export type ExportCodec = "h264" | "h265" | "prores";
@@ -238,6 +245,12 @@ function buildVideoFilterChain(entry: ExportVideoSegment, settings: ExportSettin
 	if (brightness !== 0 || contrast !== 1 || saturation !== 1) {
 		filters.push(
 			`eq=brightness=${brightness.toFixed(3)}:contrast=${contrast.toFixed(3)}:saturation=${saturation.toFixed(3)}`,
+		);
+	}
+	if (entry.chromaKey) {
+		const hex = entry.chromaKey.color.replace(/^#/, "0x");
+		filters.push(
+			`chromakey=${hex}:${entry.chromaKey.similarity.toFixed(3)}:${entry.chromaKey.blend.toFixed(3)}`,
 		);
 	}
 	const { scale, offsetX, offsetY } = entry.transform;
@@ -500,6 +513,68 @@ export interface WaveformResult {
 	sampleRate: number;
 	channels: number;
 	peaks: number[];
+}
+
+export interface SilenceDetectOptions {
+	noiseDb: number;
+	minDuration: number;
+	startTime?: number;
+	endTime?: number;
+}
+
+export interface SilenceRange {
+	start: number;
+	end: number;
+}
+
+export function detectSilence(
+	filePath: string,
+	opts: SilenceDetectOptions,
+): Promise<SilenceRange[]> {
+	return new Promise((resolve, reject) => {
+		const ranges: SilenceRange[] = [];
+		let pendingStart: number | null = null;
+		const startRe = /silence_start:\s*(-?\d+(?:\.\d+)?)/;
+		const endRe = /silence_end:\s*(-?\d+(?:\.\d+)?)/;
+
+		const noise = Math.max(-120, Math.min(0, opts.noiseDb));
+		const minDur = Math.max(0.05, opts.minDuration);
+		const offset = opts.startTime ?? 0;
+
+		const cmd = ffmpeg(filePath);
+		if (opts.startTime !== undefined) {
+			cmd.inputOptions(["-ss", opts.startTime.toFixed(3)]);
+		}
+		if (opts.endTime !== undefined) {
+			cmd.inputOptions(["-to", opts.endTime.toFixed(3)]);
+		}
+		cmd
+			.noVideo()
+			.audioFilters(`silencedetect=noise=${noise}dB:d=${minDur.toFixed(3)}`)
+			.format("null")
+			.output("-")
+			.on("stderr", (line: string) => {
+				const s = line.match(startRe);
+				if (s) {
+					pendingStart = Number(s[1]);
+					return;
+				}
+				const e = line.match(endRe);
+				if (e && pendingStart !== null) {
+					const endTime = Number(e[1]);
+					if (endTime > pendingStart) {
+						ranges.push({
+							start: Math.max(0, pendingStart + offset),
+							end: endTime + offset,
+						});
+					}
+					pendingStart = null;
+				}
+			})
+			.on("end", () => resolve(ranges))
+			.on("error", (err) => reject(err))
+			.run();
+	});
 }
 
 const WAVEFORM_BUCKETS_PER_SECOND = 50;

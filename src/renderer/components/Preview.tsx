@@ -300,6 +300,18 @@ export function Preview({ currentTime, isPlaying, playbackRate }: PreviewProps) 
 					{overlays.map(({ clip, opacity }) => (
 						<OverlayLayer key={clip.id} clip={clip} opacity={opacity} currentTime={currentTime} />
 					))}
+					{activeMedia?.clip.chromaKey && (
+						<div
+							className="preview-chromakey-badge"
+							title={`クロマキー ${activeMedia.clip.chromaKey.color}`}
+						>
+							<span
+								className="preview-chromakey-swatch"
+								style={{ backgroundColor: activeMedia.clip.chromaKey.color }}
+							/>
+							CK
+						</div>
+					)}
 				</div>
 			) : (
 				<div className="preview-placeholder">オーディオのみ</div>
