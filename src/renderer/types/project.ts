@@ -23,6 +23,12 @@ export interface ClipCrop {
 	left: number;
 }
 
+export interface ClipChromaKey {
+	color: string;
+	similarity: number;
+	blend: number;
+}
+
 export interface TextStyle {
 	text: string;
 	fontSize: number;
@@ -64,6 +70,7 @@ export interface Clip {
 	crop: ClipCrop;
 	keyframes: Keyframe[];
 	text: TextStyle | null;
+	chromaKey: ClipChromaKey | null;
 }
 
 export interface Track {
@@ -126,7 +133,7 @@ export interface ProjectFile {
 	mediaBin?: MediaBinItem[];
 }
 
-export const PROJECT_FILE_VERSION = 5;
+export const PROJECT_FILE_VERSION = 6;
 
 export const DEFAULT_FILTER: ClipFilter = {
 	brightness: 0,
@@ -145,6 +152,12 @@ export const DEFAULT_CROP: ClipCrop = {
 	right: 0,
 	bottom: 0,
 	left: 0,
+};
+
+export const DEFAULT_CHROMAKEY: ClipChromaKey = {
+	color: "#00b140",
+	similarity: 0.3,
+	blend: 0.0,
 };
 
 export const KEYFRAME_SCALE_MIN = 0.1;
@@ -236,6 +249,14 @@ export type ProjectAction =
 			payload: { clipId: string; transform: Partial<ClipTransform> };
 	  }
 	| { type: "SET_CLIP_CROP"; payload: { clipId: string; crop: Partial<ClipCrop> } }
+	| {
+			type: "SET_CLIP_CHROMAKEY";
+			payload: { clipId: string; chromaKey: ClipChromaKey | null };
+	  }
+	| {
+			type: "REMOVE_SILENCES";
+			payload: { clipId: string; ranges: Array<{ start: number; end: number }> };
+	  }
 	| { type: "SET_CLIP_TEXT"; payload: { clipId: string; text: Partial<TextStyle> } }
 	| { type: "ADD_KEYFRAME"; payload: { clipId: string; time: number } }
 	| { type: "REMOVE_KEYFRAME"; payload: { clipId: string; keyframeId: string } }

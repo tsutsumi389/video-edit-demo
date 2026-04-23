@@ -1,4 +1,11 @@
-import type { Clip, ClipCrop, ClipFilter, ClipTransform, Track } from "../types/project";
+import type {
+	Clip,
+	ClipChromaKey,
+	ClipCrop,
+	ClipFilter,
+	ClipTransform,
+	Track,
+} from "../types/project";
 import { interpolateKeyframes } from "./keyframes";
 
 export interface EDLEntry {
@@ -9,6 +16,7 @@ export interface EDLEntry {
 	filter: ClipFilter;
 	transform: ClipTransform;
 	crop: ClipCrop;
+	chromaKey: ClipChromaKey | null;
 }
 
 interface TaggedSegment {
@@ -77,6 +85,7 @@ export function flattenTracks(tracks: Track[]): EDLEntry[] {
 				filter: clip.filter,
 				transform: clip.transform,
 				crop: clip.crop,
+				chromaKey: clip.chromaKey,
 			});
 			continue;
 		}
@@ -98,6 +107,7 @@ export function flattenTracks(tracks: Track[]): EDLEntry[] {
 				filter: clip.filter,
 				transform: midTransform,
 				crop: clip.crop,
+				chromaKey: clip.chromaKey,
 			});
 		}
 	}

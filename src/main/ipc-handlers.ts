@@ -8,11 +8,13 @@ import {
 	writeAutoSave,
 } from "./autosave";
 import {
+	detectSilence,
 	type ExportPayload,
 	exportTimeline,
 	extractWaveform,
 	probe,
 	probeImage,
+	type SilenceDetectOptions,
 } from "./ffmpeg-service";
 import { buildDiagnostics, log } from "./logger";
 import { DEFAULT_PREFERENCES, loadPreferences, savePreferences } from "./preferences";
@@ -106,6 +108,18 @@ export function registerIpcHandlers(): void {
 		}
 		return await pending;
 	});
+
+	ipcMain.handle(
+		"media:detectSilence",
+		async (_event, filePath: string, opts: SilenceDetectOptions) => {
+			try {
+				return await detectSilence(filePath, opts);
+			} catch (err) {
+				log("warn", "silence", "無音検出に失敗しました", (err as Error).message);
+				throw err;
+			}
+		},
+	);
 
 	ipcMain.handle(
 		"project:save",

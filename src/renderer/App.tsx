@@ -6,6 +6,7 @@ import { PreferencesDialog } from "./components/PreferencesDialog";
 import { Preview } from "./components/Preview";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { RecoveryDialog } from "./components/RecoveryDialog";
+import { SilenceCutDialog } from "./components/SilenceCutDialog";
 import { Timeline } from "./components/Timeline";
 import { ToastProvider } from "./components/ToastProvider";
 import { Toolbar } from "./components/Toolbar";
@@ -177,6 +178,7 @@ function AppInner() {
 	const [mediaBinOpen, setMediaBinOpen] = useState(true);
 	const [snapEnabled, setSnapEnabled] = useState(true);
 	const [rippleEnabled, setRippleEnabled] = useState(false);
+	const [silenceCutOpen, setSilenceCutOpen] = useState(false);
 	const handleToggleSnap = useCallback(() => setSnapEnabled((v) => !v), []);
 	const handleToggleRipple = useCallback(() => setRippleEnabled((v) => !v), []);
 
@@ -550,6 +552,31 @@ function AppInner() {
 
 	const handleToggleMediaBin = useCallback(() => setMediaBinOpen((v) => !v), []);
 
+	const handleOpenSilenceCut = useCallback(() => {
+		if (!selectedClip || selectedClip.kind !== "media" || !selectedClip.hasAudio) {
+			showToast("オーディオを含むメディアクリップを選択してください", "info");
+			return;
+		}
+		setSilenceCutOpen(true);
+	}, [selectedClip, showToast]);
+
+	const handleApplySilenceCut = useCallback(
+		(ranges: Array<{ start: number; end: number }>) => {
+			if (!selectedClip) return;
+			if (ranges.length === 0) {
+				setSilenceCutOpen(false);
+				return;
+			}
+			project.dispatch({
+				type: "REMOVE_SILENCES",
+				payload: { clipId: selectedClip.id, ranges },
+			});
+			setSilenceCutOpen(false);
+			showToast(`${ranges.length} 箇所の無音を削除しました`, "success");
+		},
+		[selectedClip, project.dispatch, showToast],
+	);
+
 	const handleAddClipFromBin = useCallback(
 		(itemId: string) => {
 			project.addClipFromBin(itemId);
@@ -739,6 +766,8 @@ function AppInner() {
 					rippleEnabled={rippleEnabled}
 					onToggleSnap={handleToggleSnap}
 					onToggleRipple={handleToggleRipple}
+					onOpenSilenceCut={handleOpenSilenceCut}
+					selectedClip={selectedClip}
 				/>
 				<div className="main-area">
 					{mediaBinOpen && (
@@ -794,6 +823,16 @@ function AppInner() {
 					sourceFilePath={recovery?.sourceFilePath ?? null}
 					onRestore={handleRestoreRecovery}
 					onDiscard={handleDiscardRecovery}
+				/>
+				<SilenceCutDialog
+					open={silenceCutOpen}
+					clip={selectedClip}
+					onClose={() => setSilenceCutOpen(false)}
+					onApply={handleApplySilenceCut}
+					onError={(msg) => {
+						showToast(msg, "error");
+						logError("silence", msg);
+					}}
 				/>
 			</div>
 		</ProjectContext.Provider>

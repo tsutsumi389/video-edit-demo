@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useReducer } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
 	type Clip,
+	type ClipChromaKey,
 	type ClipCrop,
 	type ClipFilter,
 	type ClipTransform,
@@ -132,6 +133,12 @@ function dropTransitionsForClip(transitions: Transition[], clipId: string): Tran
 
 function cropsEqual(a: ClipCrop, b: ClipCrop): boolean {
 	return a.top === b.top && a.right === b.right && a.bottom === b.bottom && a.left === b.left;
+}
+
+function chromaKeyEqual(a: ClipChromaKey | null, b: ClipChromaKey | null): boolean {
+	if (a === b) return true;
+	if (a === null || b === null) return false;
+	return a.color === b.color && a.similarity === b.similarity && a.blend === b.blend;
 }
 
 function projectReducer(state: ProjectState, action: ProjectAction): ProjectState {
@@ -510,6 +517,112 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
 		}
 
+		case "SET_CLIP_CHROMAKEY": {
+			const { clipId, chromaKey } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found) return state;
+			const existing = found.clip.chromaKey;
+			const next: ClipChromaKey | null =
+				chromaKey === null
+					? null
+					: {
+							color: chromaKey.color,
+							similarity: clamp(chromaKey.similarity, 0, 1),
+							blend: clamp(chromaKey.blend, 0, 1),
+						};
+			if (chromaKeyEqual(existing, next)) return state;
+			const newTracks = updateClipById(withUndo.current.tracks, clipId, (c) => ({
+				...c,
+				chromaKey: next,
+			}));
+			if (!newTracks) return state;
+			return { ...withUndo, current: { ...withUndo.current, tracks: newTracks } };
+		}
+
+		case "REMOVE_SILENCES": {
+			const { clipId, ranges } = action.payload;
+			const found = findClipTrack(withUndo.current.tracks, clipId);
+			if (!found) return state;
+			if (ranges.length === 0) return state;
+			const originalClip = found.clip;
+			const playDuration = (originalClip.outPoint - originalClip.inPoint) / originalClip.speed;
+
+			const normalized = ranges
+				.map((r) => ({
+					start: Math.max(0, Math.min(playDuration, r.start)),
+					end: Math.max(0, Math.min(playDuration, r.end)),
+				}))
+				.filter((r) => r.end - r.start > 0.01)
+				.sort((a, b) => a.start - b.start);
+
+			if (normalized.length === 0) return state;
+
+			const merged: Array<{ start: number; end: number }> = [];
+			for (const r of normalized) {
+				const last = merged[merged.length - 1];
+				if (last && r.start <= last.end) {
+					last.end = Math.max(last.end, r.end);
+				} else {
+					merged.push({ ...r });
+				}
+			}
+
+			const keepSegments: Array<{ start: number; end: number }> = [];
+			let cursor = 0;
+			for (const r of merged) {
+				if (r.start > cursor) keepSegments.push({ start: cursor, end: r.start });
+				cursor = r.end;
+			}
+			if (cursor < playDuration) keepSegments.push({ start: cursor, end: playDuration });
+
+			const originalEnd = originalClip.trackPosition + playDuration;
+
+			const newClips: Clip[] = [];
+			let nextPos = originalClip.trackPosition;
+			for (const seg of keepSegments) {
+				const segLen = seg.end - seg.start;
+				if (segLen <= 0.001) continue;
+				const inPoint = originalClip.inPoint + seg.start * originalClip.speed;
+				const outPoint = originalClip.inPoint + seg.end * originalClip.speed;
+				const keyframes = originalClip.keyframes
+					.filter((k) => k.time >= seg.start && k.time <= seg.end)
+					.map((k) => ({ ...k, id: uuidv4(), time: k.time - seg.start }));
+				newClips.push({
+					...originalClip,
+					id: uuidv4(),
+					inPoint,
+					outPoint,
+					trackPosition: nextPos,
+					fadeIn: 0,
+					fadeOut: 0,
+					keyframes,
+				});
+				nextPos += segLen;
+			}
+
+			const totalRemoved = playDuration - (nextPos - originalClip.trackPosition);
+			if (totalRemoved <= 0.001 && newClips.length === 1) return state;
+
+			const tracksNext = updateTrackById(withUndo.current.tracks, found.track.id, (t) => {
+				const filtered = t.clips.filter((c) => c.id !== clipId);
+				const shifted = rippleShift(filtered, originalEnd, -totalRemoved);
+				return { ...t, clips: [...shifted, ...newClips] };
+			});
+
+			const transitionsNext = dropTransitionsForClip(withUndo.current.transitions, clipId);
+
+			return {
+				...withUndo,
+				current: {
+					...withUndo.current,
+					tracks: tracksNext,
+					transitions: transitionsNext,
+				},
+				selectedClipId:
+					state.selectedClipId === clipId ? (newClips[0]?.id ?? null) : state.selectedClipId,
+			};
+		}
+
 		case "SET_CLIP_CROP": {
 			const { clipId, crop } = action.payload;
 			const found = findClipTrack(withUndo.current.tracks, clipId);
@@ -647,6 +760,7 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 				crop: { ...DEFAULT_CROP },
 				keyframes: [],
 				text: style ? { ...style } : { ...DEFAULT_TEXT_STYLE },
+				chromaKey: null,
 			};
 			return {
 				...withUndo,
@@ -690,6 +804,7 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 				crop: { ...DEFAULT_CROP },
 				keyframes: [],
 				text: null,
+				chromaKey: null,
 			};
 			return {
 				...withUndo,
@@ -976,6 +1091,7 @@ export function useProjectReducer() {
 				crop: { ...DEFAULT_CROP },
 				keyframes: [],
 				text: null,
+				chromaKey: null,
 			};
 
 			dispatch({ type: "ADD_CLIP", payload: { clip: baseClip, trackId: track.id } });
@@ -1090,6 +1206,17 @@ function normalizeKeyframes(raw: unknown): Keyframe[] {
 	return list.sort((a, b) => a.time - b.time);
 }
 
+function normalizeChromaKey(raw: unknown): ClipChromaKey | null {
+	if (!raw || typeof raw !== "object") return null;
+	const c = raw as Partial<ClipChromaKey>;
+	if (typeof c.color !== "string") return null;
+	return {
+		color: c.color,
+		similarity: clamp(typeof c.similarity === "number" ? c.similarity : 0.3, 0, 1),
+		blend: clamp(typeof c.blend === "number" ? c.blend : 0, 0, 1),
+	};
+}
+
 function normalizeTextStyle(raw: unknown): TextStyle | null {
 	if (!raw || typeof raw !== "object") return null;
 	const s = raw as Partial<TextStyle>;
@@ -1150,6 +1277,7 @@ export function normalizeLoadedProject(raw: unknown): Project {
 							clipKind === "text"
 								? (normalizeTextStyle(cl.text) ?? { ...DEFAULT_TEXT_STYLE })
 								: null,
+						chromaKey: normalizeChromaKey(cl.chromaKey),
 					};
 				})
 			: [];

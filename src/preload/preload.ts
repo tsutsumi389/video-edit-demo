@@ -71,8 +71,23 @@ export interface ExportSettingsIPC {
 	container: ExportContainerIPC;
 }
 
+export interface ExportChromaKeyIPC {
+	color: string;
+	similarity: number;
+	blend: number;
+}
+
 export interface ExportPayloadIPC {
-	videoEdl: Array<{ sourceFile: string; inPoint: number; outPoint: number }>;
+	videoEdl: Array<{
+		sourceFile: string;
+		inPoint: number;
+		outPoint: number;
+		speed?: number;
+		filter?: { brightness: number; contrast: number; saturation: number };
+		transform?: { scale: number; offsetX: number; offsetY: number };
+		crop?: { top: number; right: number; bottom: number; left: number };
+		chromaKey?: ExportChromaKeyIPC | null;
+	}>;
 	audioTracks: ExportTrackIPC[];
 	overlays: ExportOverlayIPC[];
 	transitions: ExportTransitionIPC[];
@@ -91,6 +106,18 @@ export interface WaveformIPCResult {
 	sampleRate: number;
 	channels: number;
 	peaks: number[];
+}
+
+export interface SilenceDetectOptionsIPC {
+	noiseDb: number;
+	minDuration: number;
+	startTime?: number;
+	endTime?: number;
+}
+
+export interface SilenceRangeIPC {
+	start: number;
+	end: number;
 }
 
 export interface PreferencesIPC {
@@ -131,6 +158,7 @@ export interface ElectronAPI {
 	onExportProgress: (callback: (progress: number) => void) => () => void;
 	getMediaUrl: (filePath: string) => string;
 	getWaveform: (filePath: string) => Promise<WaveformIPCResult>;
+	detectSilence: (filePath: string, opts: SilenceDetectOptionsIPC) => Promise<SilenceRangeIPC[]>;
 	saveProject: (filePath: string | null, data: string) => Promise<string | null>;
 	saveProjectAs: (data: string) => Promise<string | null>;
 	openProject: () => Promise<{ filePath: string; content: string } | null>;
@@ -185,6 +213,8 @@ contextBridge.exposeInMainWorld("api", {
 	},
 	getMediaUrl: (filePath: string) => `media-loader://${encodeURIComponent(filePath)}`,
 	getWaveform: (filePath: string) => ipcRenderer.invoke("media:waveform", filePath),
+	detectSilence: (filePath: string, opts: SilenceDetectOptionsIPC) =>
+		ipcRenderer.invoke("media:detectSilence", filePath, opts),
 	saveProject: (filePath: string | null, data: string) =>
 		ipcRenderer.invoke("project:save", { filePath, data }),
 	saveProjectAs: (data: string) => ipcRenderer.invoke("project:saveAs", data),

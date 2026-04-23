@@ -5,7 +5,7 @@ import {
 	usePlaybackProxyEnabled,
 	useProxyMap,
 } from "../hooks/useProxyMap";
-import { type TextStyle, TITLE_TEMPLATES } from "../types/project";
+import { type Clip, type TextStyle, TITLE_TEMPLATES } from "../types/project";
 import { formatTime } from "../utils/time";
 
 interface ToolbarProps {
@@ -34,6 +34,8 @@ interface ToolbarProps {
 	rippleEnabled: boolean;
 	onToggleSnap: () => void;
 	onToggleRipple: () => void;
+	onOpenSilenceCut: () => void;
+	selectedClip: Clip | null;
 }
 
 export function Toolbar({
@@ -62,6 +64,8 @@ export function Toolbar({
 	rippleEnabled,
 	onToggleSnap,
 	onToggleRipple,
+	onOpenSilenceCut,
+	selectedClip,
 }: ToolbarProps) {
 	const { state, dispatch } = useProject();
 	const [menuOpen, setMenuOpen] = useState<string | null>(null);
@@ -85,6 +89,7 @@ export function Toolbar({
 
 	const hasClips = state.current.tracks.some((t) => t.clips.length > 0);
 	const hasSelection = state.selectedClipId !== null;
+	const selectedClipHasAudio = selectedClip?.kind === "media" && selectedClip.hasAudio;
 	const canUndo = state.undoStack.length > 0;
 	const canRedo = state.redoStack.length > 0;
 
@@ -275,6 +280,15 @@ export function Toolbar({
 					title="選択クリップを削除 (Delete)"
 				>
 					削除
+				</button>
+				<button
+					type="button"
+					className="toolbar-btn"
+					onClick={onOpenSilenceCut}
+					disabled={!selectedClipHasAudio}
+					title="選択クリップの無音を自動カット"
+				>
+					無音カット
 				</button>
 				<button
 					type="button"
